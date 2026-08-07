@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Локальная Three.js FPS игра</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main id="gameRoot" aria-label="Three.js FPS игра">
+    <div id="gameMount"></div>
+
+    <div class="hud" aria-live="polite">
+      <div class="hud-top">
+        <div class="hud-chip">
+          <span>FPS</span>
+          <strong id="fps">0</strong>
+        </div>
+        <div class="hud-chip">
+          <span>Убийства</span>
+          <strong id="kills">0</strong>
+        </div>
+        <div class="hud-chip">
+          <span>💵 Деньги</span>
+          <strong id="moneyValue">0</strong>
+        </div>
+      </div>
+
+      <div class="hud-bottom">
+        <section class="status-panel" aria-label="Состояние игрока">
+          <div class="status-row">
+            <span>❤ Здоровье</span>
+            <strong id="healthValue">100</strong>
+          </div>
+          <div class="status-bar health-bar" aria-hidden="true">
+            <i id="healthBar"></i>
+          </div>
+
+          <div class="status-row">
+            <span>🛡 Броня</span>
+            <strong id="armorValue">100</strong>
+          </div>
+          <div class="status-bar armor-bar" aria-hidden="true">
+            <i id="armorBar"></i>
+          </div>
+        </section>
+
+        <section class="weapon-panel" aria-label="Оружие и патроны">
+          <span class="panel-label">Оружие</span>
+          <strong id="weapon">Пистолет</strong>
+          <span class="ammo-caption">🔫 Магазин</span>
+          <div class="ammo-line">
+            <span id="ammoCurrent">12</span>
+            <small id="ammoMagazine">/12</small>
+            <em><b>📦</b> <i id="ammoReserve">60</i></em>
+          </div>
+          <span id="ammo" class="sr-only">12/12 | 60</span>
+        </section>
+
+        <section class="minimap-panel" aria-label="Мини-карта">
+          <canvas id="minimap" class="minimap" width="180" height="180"></canvas>
+        </section>
+      </div>
+    </div>
+
+    <div class="crosshair" aria-hidden="true"></div>
+    <div id="hitMarker" class="hit-marker" aria-hidden="true"></div>
+    <div id="damageFlash" class="damage-flash" aria-hidden="true"></div>
+    <aside id="debugOverlay" class="debug-overlay hidden" aria-label="Debug Overlay">
+      <div class="debug-title">Debug Overlay</div>
+      <div class="debug-grid">
+        <span>FPS</span><strong id="debugFps">0</strong>
+        <span>Frame</span><strong id="debugFrameTime">0.00 ms</strong>
+        <span>CPU Time</span><strong id="debugCpuTime">0.00 ms</strong>
+        <span>GPU/Render</span><strong id="debugGpuTime">0.00 ms</strong>
+        <span>Draw Calls</span><strong id="debugDrawCalls">0</strong>
+        <span>Triangles</span><strong id="debugTriangles">0</strong>
+        <span>Vertices</span><strong id="debugVertices">0</strong>
+        <span>Scene Objects</span><strong id="debugSceneObjects">0</strong>
+        <span>Mesh</span><strong id="debugMeshCount">0</strong>
+        <span>Lights</span><strong id="debugLights">0</strong>
+        <span>Materials</span><strong id="debugMaterials">0</strong>
+        <span>Active NPC</span><strong id="debugActiveNpc">0</strong>
+        <span>Physics Objects</span><strong id="debugPhysicsObjects">0</strong>
+        <span>JS Memory</span><strong id="debugMemory">n/a</strong>
+        <span>Garbage Collections</span><strong id="debugGarbageCollections">0</strong>
+        <span>Particles</span><strong id="debugParticles">0</strong>
+      </div>
+    </aside>
+    <div id="interactionPrompt" class="interaction-prompt hidden" aria-live="polite">[E] Взаимодействовать</div>
+    <div id="pickupPrompt" class="pickup-prompt hidden" aria-live="polite"></div>
+    <div id="killFeed" class="kill-feed" aria-live="polite"></div>
+
+    <div id="baseHud" class="base-hud hidden" aria-live="polite">
+      <span id="baseName">База</span>
+      <strong id="baseEnemies">0</strong>
+      <em id="baseAlert">ТИХО</em>
+    </div>
+    <div id="baseMessage" class="base-message hidden" aria-live="polite">База захвачена</div>
+
+    <div id="survivalHud" class="survival-hud hidden" aria-live="polite">
+      <div>
+        <span>🌊 Волна</span>
+        <strong id="waveNumber">1</strong>
+      </div>
+      <div>
+        <span>👹 Осталось</span>
+        <strong id="waveEnemies">5</strong>
+      </div>
+      <div>
+        <span>Статус</span>
+        <strong id="waveTimer">15</strong>
+      </div>
+    </div>
+
+    <div id="waveBanner" class="wave-banner hidden" aria-live="polite">ВОЛНА 1</div>
+
+    <section id="shopScreen" class="shop-screen hidden" aria-label="Магазин выживания">
+      <div class="shop-panel">
+        <div class="shop-header">
+          <div>
+            <span>Выживание 2.0</span>
+            <h2>Магазин</h2>
+          </div>
+          <strong id="shopMoney">💵 0</strong>
+        </div>
+        <div id="shopItems" class="shop-grid"></div>
+        <p id="shopMessage" class="shop-message"></p>
+        <button id="nextWaveButton" type="button">НАЧАТЬ СЛЕДУЮЩУЮ ВОЛНУ</button>
+      </div>
+    </section>
+
+    <section id="tabMenu" class="tab-menu hidden" aria-label="Меню паузы">
+      <div class="tab-panel">
+        <h2>Пауза</h2>
+        <button id="modeButton" type="button">▶ Режим</button>
+        <button id="mapButton" type="button">▶ Карта</button>
+      </div>
+    </section>
+
+    <section id="modeDialog" class="mode-dialog hidden" aria-label="Выбор режима">
+      <div class="mode-panel">
+        <h2>Выбор режима</h2>
+        <button id="freeModeButton" type="button">Свободная игра</button>
+        <button id="survivalModeButton" type="button">Выживание</button>
+      </div>
+    </section>
+
+    <section id="mapDialog" class="map-dialog hidden" aria-label="Выбор карты">
+      <div class="map-panel">
+        <h2>Выбор карты</h2>
+        <div id="mapItems" class="map-list"></div>
+        <p id="mapMessage" class="map-message"></p>
+      </div>
+    </section>
+
+    <section id="defeatScreen" class="defeat-screen hidden" aria-label="Поражение">
+      <div class="defeat-panel">
+        <h2>Поражение</h2>
+        <div class="defeat-stats">
+          <span>Волна <b id="defeatWave">1</b></span>
+          <span>Убийства <b id="defeatKills">0</b></span>
+          <span>Время <b id="defeatTime">00:00</b></span>
+          <span>Серия <b id="defeatStreak">0</b></span>
+          <span>Деньги <b id="defeatMoney">0</b></span>
+        </div>
+        <div class="defeat-records">
+          <span>Лучшее время <b id="bestScore">00:00</b></span>
+          <span>Макс. волна <b id="bestWave">0</b></span>
+          <span>Рекорд убийств <b id="bestKills">0</b></span>
+        </div>
+        <button id="retryButton" type="button">Играть снова</button>
+        <button id="mainMenuButton" type="button">Главное меню</button>
+      </div>
+    </section>
+
+    <section class="audio-panel" aria-label="Громкость">
+      <button id="audioToggle" class="audio-toggle" type="button" aria-expanded="false">Звук</button>
+      <div id="audioMenu" class="audio-menu hidden">
+        <label>
+          <span>Общая <b id="volume-master-value">78%</b></span>
+          <input id="volume-master" type="range" min="0" max="100" value="78">
+        </label>
+        <label>
+          <span>Оружие <b id="volume-weapons-value">82%</b></span>
+          <input id="volume-weapons" type="range" min="0" max="100" value="82">
+        </label>
+        <label>
+          <span>Эффекты <b id="volume-effects-value">72%</b></span>
+          <input id="volume-effects" type="range" min="0" max="100" value="72">
+        </label>
+        <label>
+          <span>Атмосфера <b id="volume-ambient-value">42%</b></span>
+          <input id="volume-ambient" type="range" min="0" max="100" value="42">
+        </label>
+      </div>
+    </section>
+
+    <section id="startScreen" class="start-screen">
+      <div class="start-panel">
+        <h1>Canvas Arena 3D</h1>
+        <p>WASD - движение, Shift - бег, Ctrl - присед, Space - прыжок, V - перелезть, E - двери, мышь - обзор, ЛКМ - огонь, 1/2 - оружие, R - перезарядка.</p>
+        <button id="startMapButton" type="button">▶ Карта</button>
+        <button id="playButton" type="button">Играть</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="vendor/three.min.js"></script>
+  <script src="config.js"></script>
+  <script src="utils.js"></script>
+  <script src="world.js"></script>
+  <script src="player.js"></script>
+  <script src="audio.js"></script>
+  <script src="weapons.js"></script>
+  <script src="npc.js"></script>
+  <script src="hud.js"></script>
+  <script src="loot.js"></script>
+  <script src="modes.js"></script>
+  <script src="maps.js"></script>
+  <script src="bases.js"></script>
+  <script src="weather.js"></script>
+  <script src="main.js"></script>
+</body>
+</html>
