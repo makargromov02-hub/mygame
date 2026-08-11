@@ -3,7 +3,8 @@
 
   const STORAGE_KEY = 'controlMode';
   const SENSITIVITY_KEY = 'mobileSensitivity';
-  const LAYOUT_KEY = 'mobileControlLayout';
+  const LAYOUT_KEY = 'mobileControlsLayoutV1';
+  const LEGACY_LAYOUT_KEY = 'mobileControlLayout';
   const MODES = { desktop: 'desktop', mobile: 'mobile' };
   const DEFAULT_LAYOUT = {
     version: 1,
@@ -18,8 +19,31 @@
       pistol: { x: 0.60, y: 0.91 },
       rifle: { x: 0.46, y: 0.91 },
       menu: { x: 0.92, y: 0.07 }
+    },
+    elementScale: {
+      joystick: 1,
+      fire: 1,
+      jump: 1,
+      reload: 1,
+      interact: 1,
+      pistol: 1,
+      rifle: 1,
+      menu: 1
     }
   };
+  const CONTROL_LABELS = {
+    joystick: 'Джойстик',
+    fire: 'Огонь',
+    jump: 'Прыжок',
+    reload: 'Перезарядка',
+    interact: 'Взаимодействие',
+    pistol: 'Пистолет',
+    rifle: 'Автомат',
+    menu: 'Меню'
+  };
+  const MIN_ELEMENT_SCALE = 0.7;
+  const MAX_ELEMENT_SCALE = 1.5;
+  const SAFE_MARGIN = 12;
 
   class DeviceModeSystem {
     constructor(elements, callbacks) {
@@ -115,6 +139,7 @@
         root.addEventListener('pointermove', (event) => this.handleEditPointerMove(event), true);
         root.addEventListener('pointerup', (event) => this.handleEditPointerUp(event), true);
         root.addEventListener('pointercancel', (event) => this.handleEditPointerUp(event), true);
+        root.addEventListener('lostpointercapture', (event) => this.handleEditPointerLost(event), true);
         root.addEventListener('pointercancel', (event) => this.releasePointer(event));
         root.addEventListener('lostpointercapture', (event) => this.releasePointer(event));
       }
@@ -159,18 +184,25 @@
     loadLayout() {
       const fallback = this.cloneLayout(DEFAULT_LAYOUT);
       try {
-        const raw = localStorage.getItem(LAYOUT_KEY);
+        const raw = localStorage.getItem(LAYOUT_KEY) || localStorage.getItem(LEGACY_LAYOUT_KEY);
         if (!raw) return fallback;
         const parsed = JSON.parse(raw);
+        if (parsed.version && parsed.version !== 1) return fallback;
         const next = this.cloneLayout(DEFAULT_LAYOUT);
         if (Number.isFinite(parsed.scale)) next.scale = this.clamp(parsed.scale, 0.8, 1.35);
-        if (Number.isFinite(parsed.opacity)) next.opacity = this.clamp(parsed.opacity, 0.45, 1);
+        if (Number.isFinite(parsed.opacity)) next.opacity = this.clamp(parsed.opacity, 0.3, 1);
         if (parsed.positions && typeof parsed.positions === 'object') {
           for (const key of Object.keys(next.positions)) {
             const position = parsed.positions[key];
             if (!position) continue;
             if (Number.isFinite(position.x)) next.positions[key].x = this.clamp(position.x, 0, 1);
             if (Number.isFinite(position.y)) next.positions[key].y = this.clamp(position.y, 0, 1);
+          }
+        }
+        if (parsed.elementScale && typeof parsed.elementScale === 'object') {
+          for (const key of Object.keys(next.elementScale)) {
+            const value = parsed.elementScale[key];
+            if (Number.isFinite(value)) next.elementScale[key] = this.clamp(value, MIN_ELEMENT_SCALE, MAX_ELEMENT_SCALE);
           }
         }
         return next;
@@ -190,7 +222,6 @@
     resetLayout(save) {
       this.layout = this.cloneLayout(DEFAULT_LAYOUT);
       this.applyLayout();
-      this.setSensitivity(1);
       this.updateLayoutSettings();
       if (save) this.saveLayout();
     }
@@ -207,6 +238,19 @@
         right: parseFloat(styles.getPropertyValue('--safe-right')) || 0,
         bottom: parseFloat(styles.getPropertyValue('--safe-bottom')) || 0,
         left: parseFloat(styles.getPropertyValue('--safe-left')) || 0
+      };
+    }
+
+    getSafeRect() {
+      const viewport = this.getViewportSize();
+      const safe = this.getSafeInsets();
+      const left = safe.left + SAFE_MARGIN;
+      const top = safe.top + SAFE_MARGIN;
+      return {
+        left,
+        top,
+        width: Math.max(1, viewport.width - safe.left - safe.right - SAFE_MARGIN * 2),
+        height: Math.max(1, viewport.height - safe.top - safe.bottom - SAFE_MARGIN * 2)
       };
     }
 
@@ -227,6 +271,7 @@
       for (const key of Object.keys(this.editableControls)) {
         this.applyControlPosition(key);
       }
+      this.updateSelectedScaleControl();
     }
 
     applyControlPosition(key) {
@@ -234,19 +279,18 @@
       const position = this.layout.positions[key];
       if (!element || !position) return;
 
-      const viewport = this.getViewportSize();
-      const safe = this.getSafeInsets();
+      const safeRect = this.getSafeRect();
       const baseWidth = element.offsetWidth || element.getBoundingClientRect().width || 56;
       const baseHeight = element.offsetHeight || element.getBoundingClientRect().height || 56;
-      const scale = this.layout.scale || 1;
+      const scale = this.getControlScale(key);
       const halfWidth = (baseWidth * scale) / 2;
       const halfHeight = (baseHeight * scale) / 2;
-      const minX = safe.left + halfWidth + 8;
-      const maxX = viewport.width - safe.right - halfWidth - 8;
-      const minY = safe.top + halfHeight + 8;
-      const maxY = viewport.height - safe.bottom - halfHeight - 8;
-      const x = this.clamp(position.x * viewport.width, minX, Math.max(minX, maxX));
-      const y = this.clamp(position.y * viewport.height, minY, Math.max(minY, maxY));
+      const minX = safeRect.left + halfWidth;
+      const maxX = safeRect.left + safeRect.width - halfWidth;
+      const minY = safeRect.top + halfHeight;
+      const maxY = safeRect.top + safeRect.height - halfHeight;
+      const x = this.clamp(safeRect.left + position.x * safeRect.width, minX, Math.max(minX, maxX));
+      const y = this.clamp(safeRect.top + position.y * safeRect.height, minY, Math.max(minY, maxY));
 
       element.style.left = x.toFixed(1) + 'px';
       element.style.top = y.toFixed(1) + 'px';
@@ -254,6 +298,14 @@
       element.style.bottom = 'auto';
       element.style.transformOrigin = 'center';
       element.style.transform = 'translate(-50%, -50%) scale(' + scale.toFixed(3) + ')';
+    }
+
+    getControlScale(key) {
+      const globalScale = Number.isFinite(this.layout.scale) ? this.layout.scale : 1;
+      const elementScale = this.layout.elementScale && Number.isFinite(this.layout.elementScale[key])
+        ? this.layout.elementScale[key]
+        : 1;
+      return this.clamp(globalScale * elementScale, 0.55, 2.05);
     }
 
     bindJoystick() {
@@ -480,7 +532,7 @@
       }
       if (opacity) {
         opacity.addEventListener('input', () => {
-          this.layout.opacity = this.clamp(Number(opacity.value) / 100, 0.45, 1);
+          this.layout.opacity = this.clamp(Number(opacity.value) / 100, 0.3, 1);
           this.applyLayout();
           this.updateLayoutSettings();
           this.saveLayout();
@@ -495,21 +547,69 @@
       const save = this.elements.mobileEditSaveButton;
       const cancel = this.elements.mobileEditCancelButton;
       const reset = this.elements.mobileEditResetButton;
+      const selectedScale = this.elements.mobileSelectedScale;
       if (save) save.addEventListener('pointerdown', (event) => {
         event.preventDefault();
         event.stopPropagation();
+        event.stopImmediatePropagation();
         this.saveEditMode();
       });
       if (cancel) cancel.addEventListener('pointerdown', (event) => {
         event.preventDefault();
         event.stopPropagation();
+        event.stopImmediatePropagation();
         this.cancelEditMode();
       });
       if (reset) reset.addEventListener('pointerdown', (event) => {
         event.preventDefault();
         event.stopPropagation();
-        this.resetLayout(false);
+        event.stopImmediatePropagation();
+        if (!window.confirm || window.confirm('Сбросить расположение сенсорного управления?')) {
+          this.resetLayout(false);
+          this.selectEditControl('joystick');
+        }
       });
+      if (selectedScale) {
+        selectedScale.addEventListener('input', () => {
+          if (!this.selectedEditKey) return;
+          this.setElementScale(this.selectedEditKey, Number(selectedScale.value) / 100);
+        });
+        selectedScale.addEventListener('pointerdown', (event) => {
+          event.stopPropagation();
+          event.stopImmediatePropagation();
+        });
+        selectedScale.addEventListener('pointermove', (event) => {
+          event.stopPropagation();
+        });
+        selectedScale.addEventListener('pointerup', (event) => {
+          event.stopPropagation();
+        });
+        selectedScale.addEventListener('pointercancel', (event) => {
+          event.stopPropagation();
+        });
+      }
+    }
+
+    setElementScale(key, value) {
+      if (!this.layout.elementScale || !this.editableControls[key]) return;
+      this.layout.elementScale[key] = this.clamp(Number(value) || 1, MIN_ELEMENT_SCALE, MAX_ELEMENT_SCALE);
+      this.applyControlPosition(key);
+      this.updateSelectedScaleControl();
+    }
+
+    updateSelectedScaleControl() {
+      const input = this.elements.mobileSelectedScale;
+      const value = this.elements.mobileSelectedScaleValue;
+      if (!input || !value) return;
+      const key = this.selectedEditKey;
+      const scale = key && this.layout.elementScale && Number.isFinite(this.layout.elementScale[key])
+        ? this.layout.elementScale[key]
+        : 1;
+      const percent = Math.round(scale * 100);
+      input.value = percent;
+      value.textContent = percent + '%';
+      input.disabled = !key;
+      input.closest('label')?.classList.toggle('mobile-edit-disabled', !key);
     }
 
     updateLayoutSettings() {
@@ -533,6 +633,7 @@
       if (this.elements.mobileEditToolbar) this.elements.mobileEditToolbar.classList.remove('hidden');
       this.setVisible(true);
       this.clearEditSelection();
+      this.selectEditControl('joystick');
     }
 
     exitEditMode() {
@@ -565,6 +666,7 @@
       for (const element of Object.values(this.editableControls)) {
         element.classList.remove('mobile-edit-selected');
       }
+      this.updateSelectedScaleControl();
     }
 
     selectEditControl(key) {
@@ -573,9 +675,10 @@
       const element = this.editableControls[key];
       if (element) element.classList.add('mobile-edit-selected');
       if (this.elements.mobileEditHint) {
-        const label = element ? (element.getAttribute('aria-label') || key) : key;
+        const label = CONTROL_LABELS[key] || (element ? (element.getAttribute('aria-label') || key) : key);
         this.elements.mobileEditHint.textContent = 'Выбрано: ' + label;
       }
+      this.updateSelectedScaleControl();
     }
 
     update(dt) {
@@ -608,7 +711,7 @@
       event.stopImmediatePropagation();
       this.selectEditControl(key);
       this.dragState = { pointerId: event.pointerId, key };
-      if (target.setPointerCapture) target.setPointerCapture(event.pointerId);
+      this.safeSetPointerCapture(target, event.pointerId);
       this.moveEditedControl(key, event.clientX, event.clientY);
     }
 
@@ -634,15 +737,33 @@
       this.dragState = null;
     }
 
+    handleEditPointerLost(event) {
+      if (!this.editMode || !this.dragState || event.pointerId !== this.dragState.pointerId) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      this.dragState = null;
+    }
+
     isEditToolbarEvent(event) {
       return Boolean(this.elements.mobileEditToolbar && this.elements.mobileEditToolbar.contains(event.target));
     }
 
     moveEditedControl(key, clientX, clientY) {
-      const viewport = this.getViewportSize();
-      if (!viewport.width || !viewport.height || !this.layout.positions[key]) return;
-      this.layout.positions[key].x = this.clamp(clientX / viewport.width, 0, 1);
-      this.layout.positions[key].y = this.clamp(clientY / viewport.height, 0, 1);
+      const safeRect = this.getSafeRect();
+      if (!safeRect.width || !safeRect.height || !this.layout.positions[key]) return;
+      const element = this.editableControls[key];
+      const rect = element ? element.getBoundingClientRect() : { width: 56, height: 56 };
+      const halfWidth = Math.max(20, rect.width / 2);
+      const halfHeight = Math.max(20, rect.height / 2);
+      const minX = safeRect.left + halfWidth;
+      const maxX = safeRect.left + safeRect.width - halfWidth;
+      const minY = safeRect.top + halfHeight;
+      const maxY = safeRect.top + safeRect.height - halfHeight;
+      const x = this.clamp(clientX, minX, Math.max(minX, maxX));
+      const y = this.clamp(clientY, minY, Math.max(minY, maxY));
+      this.layout.positions[key].x = this.clamp((x - safeRect.left) / safeRect.width, 0, 1);
+      this.layout.positions[key].y = this.clamp((y - safeRect.top) / safeRect.height, 0, 1);
       this.applyControlPosition(key);
     }
 

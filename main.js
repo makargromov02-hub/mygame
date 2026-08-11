@@ -125,6 +125,8 @@
     mobileResetControlsButton: document.getElementById('mobileResetControlsButton'),
     mobileEditToolbar: document.getElementById('mobileEditToolbar'),
     mobileEditHint: document.getElementById('mobileEditHint'),
+    mobileSelectedScale: document.getElementById('mobile-selected-scale'),
+    mobileSelectedScaleValue: document.getElementById('mobile-selected-scale-value'),
     mobileEditSaveButton: document.getElementById('mobileEditSaveButton'),
     mobileEditCancelButton: document.getElementById('mobileEditCancelButton'),
     mobileEditResetButton: document.getElementById('mobileEditResetButton'),

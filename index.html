@@ -149,16 +149,16 @@
         <button id="modeButton" type="button">▶ Режим</button>
         <button id="mapButton" type="button">▶ Карта</button>
         <button id="changeDeviceButton" type="button">Сменить устройство</button>
-        <div class="mobile-control-settings" aria-label="Настройка управления">
-          <h3>Настройка управления</h3>
+        <div class="mobile-control-settings" aria-label="Управление">
+          <h3>Управление</h3>
           <button id="mobileEditLayoutButton" type="button">Настроить расположение кнопок</button>
           <label>
-            <span>Размер элементов управления <b id="mobile-control-scale-value">100%</b></span>
+            <span>Общий размер кнопок <b id="mobile-control-scale-value">100%</b></span>
             <input id="mobile-control-scale" type="range" min="80" max="135" value="100">
           </label>
           <label>
             <span>Прозрачность кнопок <b id="mobile-control-opacity-value">100%</b></span>
-            <input id="mobile-control-opacity" type="range" min="45" max="100" value="100">
+            <input id="mobile-control-opacity" type="range" min="30" max="100" value="100">
           </label>
           <label>
             <span>Чувствительность камеры <b id="mobile-menu-sensitivity-value">100%</b></span>
@@ -300,6 +300,10 @@
       <button id="mobileRifleButton" class="mobile-control-button mobile-weapon-button mobile-rifle-button" data-mobile-control="rifle" type="button" aria-label="Автомат">2</button>
       <div id="mobileEditToolbar" class="mobile-edit-toolbar hidden" aria-label="Редактор управления">
         <span id="mobileEditHint">Перетащите элемент управления</span>
+        <label class="mobile-edit-size-control">
+          <span>Размер выбранного элемента <b id="mobile-selected-scale-value">100%</b></span>
+          <input id="mobile-selected-scale" type="range" min="70" max="150" value="100">
+        </label>
         <div class="mobile-edit-actions">
           <button id="mobileEditSaveButton" type="button">Сохранить</button>
           <button id="mobileEditCancelButton" type="button">Отмена</button>
