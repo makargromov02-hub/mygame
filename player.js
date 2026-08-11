@@ -32,6 +32,8 @@
       this.armor = this.maxArmor;
       this.aimSlowMultiplier = 1;
       this.keys = new Set();
+      this.touchMoveX = 0;
+      this.touchMoveZ = 0;
 
       this.updateCamera();
     }
@@ -42,6 +44,11 @@
       } else {
         this.keys.delete(code);
       }
+    }
+
+    setAnalogMove(x, z) {
+      this.touchMoveX = window.GameUtils.clamp(x || 0, -1, 1);
+      this.touchMoveZ = window.GameUtils.clamp(z || 0, -1, 1);
     }
 
     reset() {
@@ -67,6 +74,7 @@
       this.armor = this.maxArmor;
       this.aimSlowMultiplier = 1;
       this.keys.clear();
+      this.setAnalogMove(0, 0);
       this.updateCamera();
     }
 
@@ -110,14 +118,16 @@
       if (this.keys.has('KeyS')) moveZ += 1;
       if (this.keys.has('KeyA')) moveX -= 1;
       if (this.keys.has('KeyD')) moveX += 1;
+      moveX += this.touchMoveX;
+      moveZ += this.touchMoveZ;
 
       this.isSprinting = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
       this.isCrouching = this.keys.has('ControlLeft') || this.keys.has('ControlRight');
-      this.isMoving = moveX !== 0 || moveZ !== 0;
+      this.isMoving = Math.hypot(moveX, moveZ) > 0.001;
       this.updateStance(dt);
 
       if (this.isMoving) {
-        const length = Math.hypot(moveX, moveZ);
+        const length = Math.max(1, Math.hypot(moveX, moveZ));
         moveX /= length;
         moveZ /= length;
 

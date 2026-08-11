@@ -11,6 +11,12 @@
   --armor: #65b7ff;
   --ammo: #ffd37a;
   --line: rgba(237, 243, 247, 0.18);
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --mobile-control-scale: 1;
+  --mobile-control-opacity: 1;
 }
 
 * {
@@ -23,9 +29,13 @@ body {
   height: 100%;
   margin: 0;
   overflow: hidden;
+  overscroll-behavior: none;
   background: var(--bg);
   color: var(--text);
   font-family: Arial, Helvetica, sans-serif;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: none;
 }
 
 #gameRoot,
@@ -307,7 +317,7 @@ body {
   position: fixed;
   top: 14px;
   right: 14px;
-  z-index: 3;
+  z-index: 7;
   color: var(--text);
   user-select: none;
 }
@@ -717,6 +727,67 @@ body {
   margin-top: 10px;
 }
 
+.mobile-control-settings {
+  display: none;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(237, 243, 247, 0.14);
+  text-align: left;
+}
+
+.control-mobile .mobile-control-settings {
+  display: grid;
+  gap: 10px;
+  max-height: max(180px, calc(100dvh - 360px - env(safe-area-inset-bottom)));
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.mobile-control-settings h3 {
+  margin: 0 0 2px;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.mobile-control-settings label {
+  display: grid;
+  gap: 5px;
+}
+
+.mobile-control-settings span {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.mobile-control-settings b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.mobile-control-settings input,
+.mobile-control-settings select {
+  width: 100%;
+}
+
+.mobile-control-settings input {
+  accent-color: var(--accent);
+}
+
+.mobile-control-settings select {
+  min-height: 38px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(8, 14, 22, 0.78);
+  color: var(--text);
+  padding: 0 10px;
+  outline: none;
+}
+
 .map-panel {
   width: min(620px, 100%);
 }
@@ -959,8 +1030,584 @@ button:active {
   transform: translateY(1px);
 }
 
+@media (hover: none), (pointer: coarse) {
+  button:hover,
+  .device-actions button:hover,
+  .mobile-control-button:hover {
+    background: var(--accent);
+  }
+
+  button {
+    min-height: 48px;
+  }
+}
+
 .hidden {
-  display: none;
+  display: none !important;
+}
+
+.device-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 12;
+  display: grid;
+  place-items: center;
+  padding:
+    max(22px, env(safe-area-inset-top))
+    max(22px, env(safe-area-inset-right))
+    max(22px, env(safe-area-inset-bottom))
+    max(22px, env(safe-area-inset-left));
+  background:
+    radial-gradient(circle at 25% 20%, rgba(66, 213, 155, 0.18), transparent 34%),
+    radial-gradient(circle at 78% 75%, rgba(101, 183, 255, 0.16), transparent 34%),
+    rgba(7, 10, 14, 0.88);
+  backdrop-filter: blur(14px);
+}
+
+.device-panel {
+  width: min(760px, 100%);
+  padding: clamp(22px, 5vw, 34px);
+  border: 1px solid rgba(237, 243, 247, 0.16);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.018)),
+    rgba(18, 23, 30, 0.9);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.52);
+  text-align: center;
+}
+
+.device-panel > span {
+  display: block;
+  margin-bottom: 9px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.device-panel h2 {
+  margin: 0 0 20px;
+  font-size: clamp(25px, 4.2vw, 42px);
+  font-weight: 700;
+}
+
+.device-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.device-actions button {
+  min-height: 154px;
+  padding: 18px;
+  border: 1px solid rgba(237, 243, 247, 0.16);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.02)),
+    rgba(237, 243, 247, 0.075);
+  color: var(--text);
+  text-align: center;
+}
+
+.device-actions button:hover {
+  border-color: rgba(66, 213, 155, 0.44);
+  background:
+    linear-gradient(180deg, rgba(66, 213, 155, 0.18), rgba(255, 255, 255, 0.035)),
+    rgba(237, 243, 247, 0.09);
+}
+
+.device-actions b,
+.device-actions strong,
+.device-actions small {
+  display: block;
+}
+
+.device-actions b {
+  margin-bottom: 10px;
+  font-size: 42px;
+}
+
+.device-actions strong {
+  font-size: 19px;
+}
+
+.device-actions small {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.mobile-controls {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: none;
+}
+
+.mobile-look-zone {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 42%;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.mobile-joystick {
+  position: absolute;
+  left: max(22px, env(safe-area-inset-left));
+  bottom: max(24px, env(safe-area-inset-bottom));
+  width: 138px;
+  height: 138px;
+  border: 1px solid rgba(237, 243, 247, 0.2);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle, rgba(237, 243, 247, 0.12), rgba(237, 243, 247, 0.035)),
+    rgba(8, 12, 17, 0.34);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
+  touch-action: none;
+  opacity: var(--mobile-control-opacity);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.mobile-joystick i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 58px;
+  height: 58px;
+  margin: -29px 0 0 -29px;
+  border: 1px solid rgba(66, 213, 155, 0.38);
+  border-radius: 50%;
+  background: rgba(66, 213, 155, 0.24);
+  box-shadow: 0 0 26px rgba(66, 213, 155, 0.22);
+  will-change: transform;
+  transition: transform 0.08s linear;
+}
+
+.mobile-joystick-active {
+  opacity: 0.92;
+  border-color: rgba(66, 213, 155, 0.46);
+  box-shadow: 0 0 0 2px rgba(66, 213, 155, 0.16), 0 16px 40px rgba(0, 0, 0, 0.28);
+}
+
+.mobile-control-button {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 0;
+  width: 58px;
+  height: 58px;
+  border: 1px solid rgba(237, 243, 247, 0.2);
+  border-radius: 50%;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.02)),
+    rgba(8, 12, 17, 0.44);
+  color: var(--text);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(8px);
+  font-size: 19px;
+  font-weight: 800;
+  pointer-events: auto;
+  touch-action: none;
+  opacity: var(--mobile-control-opacity);
+  transition: opacity 0.1s ease, transform 0.1s ease, border-color 0.1s ease, background 0.1s ease;
+}
+
+.mobile-control-button:hover {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.02)),
+    rgba(8, 12, 17, 0.44);
+}
+
+.mobile-control-active {
+  border-color: rgba(66, 213, 155, 0.55);
+  background:
+    linear-gradient(180deg, rgba(66, 213, 155, 0.24), rgba(255, 255, 255, 0.04)),
+    rgba(8, 12, 17, 0.5);
+  filter: brightness(1.12);
+}
+
+.mobile-weapon-selected {
+  border-color: rgba(66, 213, 155, 0.62);
+  color: #d7fff0;
+  background:
+    linear-gradient(180deg, rgba(66, 213, 155, 0.2), rgba(255, 255, 255, 0.035)),
+    rgba(8, 12, 17, 0.56);
+}
+
+.mobile-fire-button {
+  right: max(26px, env(safe-area-inset-right));
+  bottom: max(92px, calc(env(safe-area-inset-bottom) + 92px));
+  width: 82px;
+  height: 82px;
+  border-color: rgba(255, 93, 103, 0.36);
+  color: #ffd5d9;
+  font-size: 30px;
+}
+
+.mobile-jump-button {
+  right: max(122px, calc(env(safe-area-inset-right) + 122px));
+  bottom: max(92px, calc(env(safe-area-inset-bottom) + 92px));
+}
+
+.mobile-reload-button {
+  right: max(92px, calc(env(safe-area-inset-right) + 92px));
+  bottom: max(22px, env(safe-area-inset-bottom));
+}
+
+.mobile-interact-button {
+  right: max(24px, env(safe-area-inset-right));
+  bottom: max(190px, calc(env(safe-area-inset-bottom) + 190px));
+}
+
+.mobile-weapon-button {
+  width: 54px;
+  height: 54px;
+  right: max(158px, calc(env(safe-area-inset-right) + 158px));
+  bottom: max(28px, calc(env(safe-area-inset-bottom) + 28px));
+  font-size: 18px;
+}
+
+.mobile-rifle-button {
+  right: max(220px, calc(env(safe-area-inset-right) + 220px));
+}
+
+.mobile-menu-button {
+  top: max(12px, env(safe-area-inset-top));
+  right: max(12px, env(safe-area-inset-right));
+  width: 48px;
+  height: 48px;
+  z-index: 6;
+}
+
+.mobile-editing {
+  z-index: 8;
+  background: rgba(4, 8, 13, 0.2);
+}
+
+.mobile-editing .mobile-look-zone {
+  pointer-events: none;
+}
+
+.mobile-editing [data-mobile-control] {
+  outline: 1px dashed rgba(237, 243, 247, 0.42);
+  outline-offset: 5px;
+  cursor: grab;
+}
+
+.mobile-editing .mobile-edit-selected {
+  border-color: rgba(66, 213, 155, 0.92);
+  box-shadow:
+    0 0 0 2px rgba(66, 213, 155, 0.22),
+    0 0 34px rgba(66, 213, 155, 0.38);
+}
+
+.mobile-edit-toolbar {
+  position: absolute;
+  left: max(12px, env(safe-area-inset-left));
+  right: max(12px, env(safe-area-inset-right));
+  top: max(12px, env(safe-area-inset-top));
+  z-index: 9;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(237, 243, 247, 0.18);
+  border-radius: 8px;
+  background: rgba(12, 17, 23, 0.78);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(10px);
+  pointer-events: auto;
+}
+
+.mobile-edit-toolbar span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.mobile-edit-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mobile-edit-actions button {
+  min-height: 42px;
+  border: 1px solid rgba(237, 243, 247, 0.2);
+  border-radius: 8px;
+  background: rgba(237, 243, 247, 0.08);
+  color: var(--text);
+  font-weight: 800;
+}
+
+.control-mobile .audio-panel {
+  top: max(70px, calc(env(safe-area-inset-top) + 70px));
+}
+
+.control-mobile .hud {
+  inset:
+    max(10px, env(safe-area-inset-top))
+    max(10px, env(safe-area-inset-right))
+    max(10px, env(safe-area-inset-bottom))
+    max(10px, env(safe-area-inset-left));
+}
+
+.control-mobile .hud-bottom {
+  padding-bottom: calc(env(safe-area-inset-bottom) + 150px);
+}
+
+.control-mobile .tab-menu,
+.control-mobile .mode-dialog,
+.control-mobile .map-dialog,
+.control-mobile .shop-screen,
+.control-mobile .defeat-screen,
+.control-mobile .start-screen {
+  place-items: center;
+  overflow: auto;
+  padding:
+    max(12px, env(safe-area-inset-top))
+    max(12px, env(safe-area-inset-right))
+    max(12px, env(safe-area-inset-bottom))
+    max(12px, env(safe-area-inset-left));
+}
+
+.control-mobile .tab-panel,
+.control-mobile .mode-panel,
+.control-mobile .map-panel,
+.control-mobile .shop-panel,
+.control-mobile .defeat-panel,
+.control-mobile .start-panel {
+  width: min(100%, 560px);
+  max-height: calc(100dvh - max(24px, env(safe-area-inset-top)) - max(24px, env(safe-area-inset-bottom)));
+  overflow: auto;
+  padding: clamp(14px, 3.2vw, 22px);
+  -webkit-overflow-scrolling: touch;
+}
+
+.control-mobile .tab-panel h2,
+.control-mobile .mode-panel h2,
+.control-mobile .map-panel h2,
+.control-mobile .shop-panel h2,
+.control-mobile .defeat-panel h2 {
+  margin-bottom: 10px;
+  font-size: clamp(19px, 4.5vw, 24px);
+}
+
+.control-mobile .tab-panel button,
+.control-mobile .mode-panel button,
+.control-mobile .map-panel button,
+.control-mobile .shop-panel button,
+.control-mobile .defeat-panel button,
+.control-mobile .start-panel button,
+.control-mobile .device-actions button {
+  min-height: 48px;
+  font-size: clamp(14px, 3.6vw, 17px);
+}
+
+.control-mobile .start-panel p {
+  font-size: clamp(12px, 3vw, 15px);
+  line-height: 1.35;
+}
+
+.control-mobile .audio-panel {
+  right: max(72px, calc(env(safe-area-inset-right) + 72px));
+}
+
+.control-mobile .audio-toggle {
+  min-width: 76px;
+  min-height: 42px;
+  padding-inline: 10px;
+}
+
+.control-mobile .audio-menu {
+  width: min(230px, calc(100vw - 24px - env(safe-area-inset-left) - env(safe-area-inset-right)));
+  max-height: min(70dvh, 420px);
+  overflow: auto;
+}
+
+.control-mobile .hud-top {
+  max-width: calc(100vw - 96px - env(safe-area-inset-left) - env(safe-area-inset-right));
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.control-mobile .hud-chip {
+  min-height: 30px;
+  padding: 5px 8px;
+  gap: 7px;
+  font-size: 12px;
+}
+
+.control-mobile .hud-chip span,
+.control-mobile .panel-label,
+.control-mobile .status-row span,
+.control-mobile .ammo-caption {
+  font-size: 10px;
+}
+
+.control-mobile .hud-bottom {
+  display: grid;
+  grid-template-columns: minmax(108px, 0.9fr) minmax(112px, 0.8fr) minmax(74px, 0.45fr);
+  gap: 7px;
+  align-items: end;
+}
+
+.control-mobile .status-panel,
+.control-mobile .weapon-panel {
+  width: auto;
+  min-width: 0;
+  padding: 9px;
+}
+
+.control-mobile .status-row {
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.control-mobile .status-row strong {
+  font-size: 13px;
+}
+
+.control-mobile .status-bar {
+  height: 6px;
+  margin-bottom: 7px;
+}
+
+.control-mobile .weapon-panel strong {
+  overflow: hidden;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.control-mobile .ammo-line {
+  gap: 2px;
+  margin-top: 4px;
+}
+
+.control-mobile .ammo-line span {
+  font-size: clamp(22px, 6vw, 30px);
+}
+
+.control-mobile .ammo-line small,
+.control-mobile .ammo-line em {
+  font-size: 12px;
+}
+
+.control-mobile .ammo-line em {
+  margin-left: 5px;
+}
+
+.control-mobile .minimap-panel {
+  justify-self: end;
+  width: clamp(78px, 20vw, 116px);
+  height: clamp(78px, 20vw, 116px);
+  padding: 5px;
+}
+
+.control-mobile .minimap {
+  width: 100%;
+  height: 100%;
+}
+
+.control-mobile .survival-hud {
+  top: max(48px, calc(env(safe-area-inset-top) + 48px));
+  gap: 6px;
+  max-width: calc(100vw - 104px - env(safe-area-inset-left) - env(safe-area-inset-right));
+}
+
+.control-mobile .survival-hud div {
+  min-width: 0;
+  padding: 6px 8px;
+}
+
+.control-mobile .survival-hud span {
+  font-size: 9px;
+}
+
+.control-mobile .survival-hud strong {
+  font-size: 15px;
+}
+
+.control-mobile .base-hud {
+  top: max(88px, calc(env(safe-area-inset-top) + 88px));
+  max-width: calc(100vw - 24px);
+  gap: 6px;
+  padding: 7px 9px;
+}
+
+.control-mobile .base-hud span {
+  min-width: 0;
+  max-width: 42vw;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.control-mobile .base-hud strong,
+.control-mobile .base-hud em {
+  min-width: 34px;
+  font-size: 10px;
+}
+
+.control-mobile .kill-feed {
+  top: max(112px, calc(env(safe-area-inset-top) + 112px));
+  right: max(8px, env(safe-area-inset-right));
+  width: min(220px, 56vw);
+}
+
+.control-mobile .interaction-prompt,
+.control-mobile .pickup-prompt {
+  max-width: calc(100vw - 28px);
+  padding: 8px 10px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.control-mobile .shop-panel {
+  width: min(100%, 920px);
+}
+
+.control-mobile .shop-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr));
+}
+
+.control-mobile .shop-item {
+  min-height: 0;
+  padding: 10px;
+}
+
+.control-mobile .shop-item button {
+  min-height: 44px;
+}
+
+.control-mobile .defeat-stats,
+.control-mobile .defeat-records {
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+}
+
+.control-mobile .map-panel .map-choice {
+  min-height: 54px;
+  padding: 10px;
+}
+
+.control-mobile .debug-overlay {
+  left: max(8px, env(safe-area-inset-left));
+  right: auto;
+  top: max(8px, env(safe-area-inset-top));
+  width: min(240px, calc(100vw - 96px));
+  max-height: 70dvh;
+  overflow: auto;
 }
 
 @media (max-width: 720px) {
@@ -1002,5 +1649,282 @@ button:active {
   .minimap {
     width: 86px;
     height: 86px;
+  }
+
+  .device-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .control-mobile .hud-bottom {
+    grid-template-columns: minmax(96px, 1fr) minmax(112px, 1fr);
+  }
+
+  .control-mobile .minimap-panel {
+    display: none;
+  }
+
+  .control-mobile .device-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .control-mobile .device-actions button {
+    min-height: 118px;
+  }
+}
+
+@media (max-height: 520px) and (orientation: landscape) {
+  .control-mobile .hud {
+    inset:
+      max(6px, env(safe-area-inset-top))
+      max(6px, env(safe-area-inset-right))
+      max(6px, env(safe-area-inset-bottom))
+      max(6px, env(safe-area-inset-left));
+  }
+
+  .control-mobile .hud-top {
+    max-width: 42vw;
+  }
+
+  .control-mobile .hud-chip {
+    min-height: 26px;
+    padding: 4px 7px;
+  }
+
+  .control-mobile .hud-chip span {
+    display: none;
+  }
+
+  .control-mobile .hud-bottom {
+    left: auto;
+    right: max(6px, env(safe-area-inset-right));
+    bottom: max(6px, env(safe-area-inset-bottom));
+    width: min(42vw, 330px);
+    grid-template-columns: minmax(98px, 1fr) minmax(108px, 1fr) 62px;
+    padding-bottom: 0;
+  }
+
+  .control-mobile .status-panel,
+  .control-mobile .weapon-panel {
+    padding: 7px;
+  }
+
+  .control-mobile .status-row span,
+  .control-mobile .panel-label,
+  .control-mobile .ammo-caption {
+    display: none;
+  }
+
+  .control-mobile .status-row {
+    margin-bottom: 3px;
+  }
+
+  .control-mobile .status-bar {
+    height: 5px;
+    margin-bottom: 5px;
+  }
+
+  .control-mobile .weapon-panel strong {
+    margin-top: 0;
+    font-size: 12px;
+  }
+
+  .control-mobile .ammo-line span {
+    font-size: 21px;
+  }
+
+  .control-mobile .minimap-panel {
+    width: 62px;
+    height: 62px;
+    padding: 4px;
+  }
+
+  .control-mobile .survival-hud {
+    top: max(6px, env(safe-area-inset-top));
+    max-width: 40vw;
+    transform: none;
+    left: 50%;
+  }
+
+  .control-mobile .survival-hud div {
+    padding: 4px 6px;
+  }
+
+  .control-mobile .survival-hud span {
+    display: none;
+  }
+
+  .control-mobile .base-hud {
+    top: max(42px, calc(env(safe-area-inset-top) + 42px));
+    padding: 5px 7px;
+  }
+
+  .control-mobile .kill-feed {
+    display: none;
+  }
+
+  .control-mobile .audio-panel {
+    top: max(6px, env(safe-area-inset-top));
+    right: max(130px, calc(env(safe-area-inset-right) + 130px));
+  }
+
+  .control-mobile .audio-toggle {
+    min-height: 36px;
+    font-size: 12px;
+  }
+
+  .control-mobile .tab-menu,
+  .control-mobile .mode-dialog,
+  .control-mobile .map-dialog,
+  .control-mobile .shop-screen,
+  .control-mobile .defeat-screen,
+  .control-mobile .start-screen,
+  .device-screen {
+    place-items: start center;
+    padding:
+      max(8px, env(safe-area-inset-top))
+      max(8px, env(safe-area-inset-right))
+      max(8px, env(safe-area-inset-bottom))
+      max(8px, env(safe-area-inset-left));
+  }
+
+  .control-mobile .tab-panel,
+  .control-mobile .mode-panel,
+  .control-mobile .map-panel,
+  .control-mobile .shop-panel,
+  .control-mobile .defeat-panel,
+  .control-mobile .start-panel,
+  .device-panel {
+    width: min(100%, 760px);
+    max-height: calc(100dvh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    padding: 12px;
+  }
+
+  .control-mobile .tab-panel {
+    width: min(100%, 620px);
+  }
+
+  .control-mobile .mobile-control-settings {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px 10px;
+  }
+
+  .control-mobile .mobile-control-settings {
+    max-height: min(230px, max(76px, calc(100dvh - 314px - env(safe-area-inset-bottom))));
+    overflow: auto;
+    padding-right: 4px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .control-mobile .mobile-control-settings h3,
+  .control-mobile .mobile-control-settings button {
+    grid-column: 1 / -1;
+  }
+
+  .control-mobile .mobile-control-settings h3 {
+    font-size: 13px;
+  }
+
+  .control-mobile .mobile-control-settings label {
+    gap: 3px;
+  }
+
+  .control-mobile .mobile-control-settings span {
+    font-size: 11px;
+  }
+
+  .control-mobile .mobile-control-settings input,
+  .control-mobile .mobile-control-settings select {
+    min-height: 32px;
+  }
+
+  .control-mobile .shop-header {
+    margin-bottom: 8px;
+  }
+
+  .control-mobile .shop-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .control-mobile .shop-item strong {
+    font-size: 13px;
+  }
+
+  .control-mobile .shop-item small {
+    font-size: 11px;
+  }
+
+  .control-mobile .defeat-stats,
+  .control-mobile .defeat-records {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .control-mobile .start-panel p {
+    margin-bottom: 12px;
+  }
+
+  .device-panel {
+    padding: 18px;
+  }
+
+  .device-actions button {
+    min-height: 112px;
+  }
+
+  .mobile-joystick {
+    width: 116px;
+    height: 116px;
+  }
+
+  .mobile-joystick i {
+    width: 50px;
+    height: 50px;
+    margin: -25px 0 0 -25px;
+  }
+
+  .mobile-control-button {
+    width: 50px;
+    height: 50px;
+    font-size: 16px;
+  }
+
+  .mobile-fire-button {
+    width: 72px;
+    height: 72px;
+  }
+
+  .mobile-pistol-button {
+    right: max(142px, calc(env(safe-area-inset-right) + 142px));
+  }
+
+  .mobile-rifle-button {
+    right: max(198px, calc(env(safe-area-inset-right) + 198px));
+  }
+
+  .control-mobile .hud-bottom {
+    padding-bottom: 0;
+  }
+}
+
+@media (hover: none), (pointer: coarse) {
+  .device-actions button:hover {
+    border-color: rgba(237, 243, 247, 0.16);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.02)),
+      rgba(237, 243, 247, 0.075);
+  }
+
+  .audio-toggle:hover {
+    background: var(--panel);
+  }
+
+  .mobile-control-button:hover,
+  .mobile-edit-actions button:hover {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.02)),
+      rgba(8, 12, 17, 0.44);
   }
 }

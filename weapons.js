@@ -62,6 +62,12 @@
       this.muzzleFlashTime = 0;
       this.bullets = [];
       this.effects = [];
+      this.performanceProfile = {
+        effectBudget: 150,
+        effectDensity: 1,
+        decalLifeScale: 1,
+        mobile: false
+      };
       this.effectPool = {};
       this.sharedGeometries = {};
       this.tempShootOrigin = new THREE.Vector3();
@@ -89,6 +95,14 @@
       this.player.camera.add(this.viewModel.root);
       this.updateHud(performance.now());
       this.updateWeaponModelVisibility();
+    }
+
+    setPerformanceProfile(profile) {
+      this.performanceProfile = Object.assign({}, this.performanceProfile, profile || {});
+    }
+
+    scaledEffectCount(count, minimum) {
+      return Math.max(minimum === undefined ? 1 : minimum, Math.round(count * (this.performanceProfile.effectDensity || 1)));
     }
 
     createRuntimePools() {
@@ -202,7 +216,7 @@
 
     acquireBullet() {
       if (this.bulletPool.length === 0 && this.bullets.length > 0) {
-        const recycled = this.bullets.shift();
+        const recycled = this.bullets.pop();
         this.releaseBullet(recycled);
       }
 
@@ -225,7 +239,9 @@
       if (this.effectPool[kind].length === 0) {
         const index = this.effects.findIndex((effect) => effect.kind === kind);
         if (index >= 0) {
-          const recycled = this.effects.splice(index, 1)[0];
+          const recycled = this.effects[index];
+          const last = this.effects.pop();
+          if (index < this.effects.length) this.effects[index] = last;
           this.releaseEffect(recycled);
         }
       }
@@ -524,7 +540,8 @@
           }
 
           this.releaseBullet(bullet);
-          this.bullets.splice(i, 1);
+          const last = this.bullets.pop();
+          if (i < this.bullets.length) this.bullets[i] = last;
         }
       }
 
@@ -634,11 +651,11 @@
       hitPosition.y = Math.max(2, hitPosition.y);
       this.addBulletMark(hitPosition, impact.normal, impact.material);
 
-      const particleCount = impact.material === 'metal' ? 14
+      const particleCount = this.scaledEffectCount(impact.material === 'metal' ? 14
         : impact.material === 'concrete' ? 11
           : impact.material === 'wood' ? 9
             : impact.material === 'dirt' ? 5
-              : 7;
+              : 7, 2);
       for (let i = 0; i < particleCount; i += 1) {
         const dir = this.tempEffectDirection.copy(velocity).normalize().multiplyScalar(-1);
         const materialScatter = impact.material === 'metal' ? 1.75 : impact.material === 'wood' ? 1.25 : 1.05;
@@ -653,7 +670,7 @@
         this.addParticle(hitPosition, this.tempEffectVelocity.copy(dir).normalize().multiplyScalar(speed), particleColor, size, impact.material === 'metal' ? 0.24 : 0.34, true);
       }
 
-      const smokeCount = impact.material === 'dirt' ? 11 : impact.material === 'concrete' ? 6 : impact.material === 'wood' ? 4 : 3;
+      const smokeCount = this.scaledEffectCount(impact.material === 'dirt' ? 11 : impact.material === 'concrete' ? 6 : impact.material === 'wood' ? 4 : 3, 1);
       for (let i = 0; i < smokeCount; i += 1) {
         const dir = this.tempEffectDirection.set(randomSigned(0.55), 0.35 + Math.random() * 0.5, randomSigned(0.55)).normalize();
         const dustColor = impact.material === 'dirt' ? 0x8f8064 : impact.material === 'wood' ? 0x7d5a37 : 0x9fa8ad;
@@ -661,7 +678,7 @@
       }
 
       if (impact.material === 'concrete') {
-        for (let i = 0; i < 5; i += 1) {
+        for (let i = 0, count = this.scaledEffectCount(5, 1); i < count; i += 1) {
           const dir = this.tempEffectDirection.set(randomSigned(0.7), 0.2 + Math.random() * 0.65, randomSigned(0.7)).normalize();
           this.addParticle(hitPosition, this.tempEffectVelocity.copy(dir).multiplyScalar(70 + Math.random() * 90), 0xc8c0b5, 4.5, 0.55, true);
         }
@@ -669,14 +686,14 @@
     }
 
     spawnWoodEffects(position) {
-      for (let i = 0; i < 12; i += 1) {
+      for (let i = 0, count = this.scaledEffectCount(12, 3); i < count; i += 1) {
         const dir = this.tempEffectDirection.set(randomSigned(0.9), 0.35 + Math.random() * 0.75, randomSigned(0.9)).normalize();
         this.addParticle(position, this.tempEffectVelocity.copy(dir).multiplyScalar(85 + Math.random() * 160), Math.random() > 0.45 ? 0x9a6538 : 0x5b351d, 3.5, 0.65, true);
       }
     }
 
     spawnGlassEffects(position) {
-      for (let i = 0; i < 18; i += 1) {
+      for (let i = 0, count = this.scaledEffectCount(18, 4); i < count; i += 1) {
         const dir = this.tempEffectDirection.set(randomSigned(1), randomSigned(0.7) + 0.45, randomSigned(1)).normalize();
         this.addParticle(position, this.tempEffectVelocity.copy(dir).multiplyScalar(75 + Math.random() * 190), 0xaee8ff, 2.2, 0.72, true);
       }
@@ -684,7 +701,7 @@
 
     spawnDebrisForObject(object, position) {
       const color = object.impactMaterial === 'glass' ? 0x9fd5ff : 0x7b4b27;
-      const count = object.impactMaterial === 'glass' ? 10 : 8;
+      const count = this.scaledEffectCount(object.impactMaterial === 'glass' ? 10 : 8, 3);
 
       for (let i = 0; i < count; i += 1) {
         const size = object.impactMaterial === 'glass' ? randomSigned(2) + 5 : randomSigned(4) + 9;
@@ -705,12 +722,12 @@
     }
 
     spawnExplosionEffects(position) {
-      for (let i = 0; i < 28; i += 1) {
+      for (let i = 0, count = this.scaledEffectCount(28, 8); i < count; i += 1) {
         const dir = this.tempEffectDirection.set(randomSigned(1), randomSigned(0.6) + 0.45, randomSigned(1)).normalize();
         this.addParticle(position, this.tempEffectVelocity.copy(dir).multiplyScalar(180 + Math.random() * 360), Math.random() > 0.45 ? 0xffb13b : 0xff4a24, 7.5, 0.75, true);
       }
 
-      for (let i = 0; i < 18; i += 1) {
+      for (let i = 0, count = this.scaledEffectCount(18, 5); i < count; i += 1) {
         const dir = this.tempEffectDirection.set(randomSigned(0.8), 0.25 + Math.random() * 0.8, randomSigned(0.8)).normalize();
         this.addParticle(position, this.tempEffectVelocity.copy(dir).multiplyScalar(65 + Math.random() * 130), 0x5f6064, 14, 1.35, false);
       }
@@ -739,7 +756,7 @@
       origin.y = Math.max(28, origin.y);
       const isHeadshot = part === 'head';
       const isLimb = part === 'leftArm' || part === 'rightArm' || part === 'leftLeg' || part === 'rightLeg';
-      const particleCount = isHeadshot ? 16 : isLimb ? 7 : 10;
+      const particleCount = this.scaledEffectCount(isHeadshot ? 16 : isLimb ? 7 : 10, isHeadshot ? 5 : 3);
       const particleSize = isHeadshot ? 3.7 : isLimb ? 2.7 : 3.2;
       const speedBonus = isHeadshot ? 55 : isLimb ? -10 : 0;
 
@@ -753,7 +770,7 @@
       const muzzle = this.tempEffectPosition.copy(origin).add(this.tempEffectDirection.copy(direction).multiplyScalar(this.current === 'rifle' ? 82 : 58));
       this.tempMuzzlePoint.copy(muzzle);
 
-      for (let i = 0; i < (this.current === 'rifle' ? 5 : 3); i += 1) {
+      for (let i = 0, count = this.scaledEffectCount(this.current === 'rifle' ? 5 : 3, 1); i < count; i += 1) {
         const drift = this.tempEffectDirection.copy(direction).multiplyScalar(18 + Math.random() * 25);
         drift.x += randomSigned(20);
         drift.y += 14 + Math.random() * 18;
@@ -761,7 +778,7 @@
         this.addParticle(muzzle, this.tempEffectVelocity.copy(drift), 0x9fa8ad, this.current === 'rifle' ? 6.5 : 5.2, 0.55 + Math.random() * 0.25, false);
       }
 
-      const sparkCount = this.current === 'rifle' ? 3 : 2;
+      const sparkCount = this.scaledEffectCount(this.current === 'rifle' ? 3 : 2, 1);
       for (let i = 0; i < sparkCount; i += 1) {
         const spark = this.tempEffectDirection.copy(direction);
         spark.x += randomSigned(0.22);
@@ -780,11 +797,14 @@
       mark.scale.setScalar(8 + Math.random() * 5);
       mark.material.color.setHex(material === 'wood' ? 0x241409 : 0x121212);
       mark.material.opacity = 0.5;
-      this.activateEffect(effect, this.tempEffectVelocity.set(0, 0, 0), 8, 0, true);
+      this.activateEffect(effect, this.tempEffectVelocity.set(0, 0, 0), 8 * (this.performanceProfile.decalLifeScale || 1), 0, true);
       this.trimEffects();
     }
 
     addParticle(position, velocity, color, size, life, gravity) {
+      if (this.effects.length >= (this.performanceProfile.effectBudget || 150) && this.effectPool.particle.length < 2) {
+        this.recycleOldestEffect();
+      }
       const effect = this.acquireEffect('particle');
       effect.position.copy(position);
       effect.size = size;
@@ -844,7 +864,8 @@
 
         if (effect.life <= 0) {
           this.releaseEffect(effect);
-          this.effects.splice(i, 1);
+          const last = this.effects.pop();
+          if (i < this.effects.length) this.effects[i] = last;
         }
       }
 
@@ -877,10 +898,18 @@
     }
 
     trimEffects() {
-      while (this.effects.length > 150) {
-        const effect = this.effects.shift();
-        this.releaseEffect(effect);
+      const limit = this.performanceProfile.effectBudget || 150;
+      while (this.effects.length > limit) {
+        this.recycleOldestEffect();
       }
+    }
+
+    recycleOldestEffect() {
+      if (!this.effects.length) return;
+      const effect = this.effects[0];
+      this.releaseEffect(effect);
+      const last = this.effects.pop();
+      if (this.effects.length > 0) this.effects[0] = last;
     }
 
     createViewModel() {

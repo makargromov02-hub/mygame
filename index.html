@@ -2,9 +2,10 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
   <title>Локальная Three.js FPS игра</title>
-  <link rel="stylesheet" href="styles.css">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles.css?v=mobile-ui-pass">
 </head>
 <body>
   <main id="gameRoot" aria-label="Three.js FPS игра">
@@ -85,6 +86,17 @@
         <span>JS Memory</span><strong id="debugMemory">n/a</strong>
         <span>Garbage Collections</span><strong id="debugGarbageCollections">0</strong>
         <span>Particles</span><strong id="debugParticles">0</strong>
+        <span>Perf Profile</span><strong id="debugPerfProfile">DESKTOP</strong>
+        <span>Render Scale</span><strong id="debugRenderScale">1.00</strong>
+        <span>Raycasts</span><strong id="debugRaycasts">0</strong>
+        <span>LOS Checks</span><strong id="debugLosChecks">0</strong>
+        <span>Collision Queries</span><strong id="debugCollisionQueries">0</strong>
+        <span>NPC AI</span><strong id="debugNpcAiTime">0.00 ms</strong>
+        <span>World</span><strong id="debugWorldTime">0.00 ms</strong>
+        <span>Weapons</span><strong id="debugWeaponsTime">0.00 ms</strong>
+        <span>Physics</span><strong id="debugPhysicsTime">0.00 ms</strong>
+        <span>Shadow Casters</span><strong id="debugShadowCasters">0</strong>
+        <span>Textures</span><strong id="debugTextures">0</strong>
       </div>
     </aside>
     <div id="interactionPrompt" class="interaction-prompt hidden" aria-live="polite">[E] Взаимодействовать</div>
@@ -133,8 +145,45 @@
     <section id="tabMenu" class="tab-menu hidden" aria-label="Меню паузы">
       <div class="tab-panel">
         <h2>Пауза</h2>
+        <button id="resumeButton" type="button">Вернуться в игру</button>
         <button id="modeButton" type="button">▶ Режим</button>
         <button id="mapButton" type="button">▶ Карта</button>
+        <button id="changeDeviceButton" type="button">Сменить устройство</button>
+        <div class="mobile-control-settings" aria-label="Настройка управления">
+          <h3>Настройка управления</h3>
+          <button id="mobileEditLayoutButton" type="button">Настроить расположение кнопок</button>
+          <label>
+            <span>Размер элементов управления <b id="mobile-control-scale-value">100%</b></span>
+            <input id="mobile-control-scale" type="range" min="80" max="135" value="100">
+          </label>
+          <label>
+            <span>Прозрачность кнопок <b id="mobile-control-opacity-value">100%</b></span>
+            <input id="mobile-control-opacity" type="range" min="45" max="100" value="100">
+          </label>
+          <label>
+            <span>Чувствительность камеры <b id="mobile-menu-sensitivity-value">100%</b></span>
+            <input id="mobile-menu-sensitivity" type="range" min="50" max="180" value="100">
+          </label>
+          <label>
+            <span>Качество mobile</span>
+            <select id="mobile-performance-profile">
+              <option value="AUTO">AUTO</option>
+              <option value="LOW">LOW</option>
+              <option value="MEDIUM">MEDIUM</option>
+              <option value="HIGH">HIGH</option>
+              <option value="ULTRA">ULTRA</option>
+            </select>
+          </label>
+          <label>
+            <span>Цель FPS</span>
+            <select id="mobile-fps-target">
+              <option value="AUTO">AUTO</option>
+              <option value="60">60 FPS</option>
+              <option value="30">30 FPS</option>
+            </select>
+          </label>
+          <button id="mobileResetControlsButton" type="button">Сбросить управление</button>
+        </div>
       </div>
     </section>
 
@@ -193,6 +242,10 @@
           <span>Атмосфера <b id="volume-ambient-value">42%</b></span>
           <input id="volume-ambient" type="range" min="0" max="100" value="42">
         </label>
+        <label>
+          <span>Mobile sensitivity <b id="mobile-sensitivity-value">100%</b></span>
+          <input id="mobile-sensitivity" type="range" min="50" max="180" value="100">
+        </label>
       </div>
     </section>
 
@@ -204,13 +257,54 @@
         <button id="playButton" type="button">Играть</button>
       </div>
     </section>
+
+    <section id="deviceScreen" class="device-screen hidden" aria-label="Выбор устройства">
+      <div class="device-panel">
+        <span>Canvas Arena 3D</span>
+        <h2>На каком устройстве вы играете?</h2>
+        <div class="device-actions">
+          <button id="desktopDeviceButton" type="button">
+            <b>🖥</b>
+            <strong>Компьютер</strong>
+            <small>Клавиатура, мышь и Pointer Lock</small>
+          </button>
+          <button id="mobileDeviceButton" type="button">
+            <b>📱</b>
+            <strong>Мобильное устройство</strong>
+            <small>Сенсорный джойстик и кнопки</small>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <div id="mobileControls" class="mobile-controls hidden" aria-label="Мобильное управление">
+      <div id="mobileLookZone" class="mobile-look-zone" aria-hidden="true"></div>
+      <div id="mobileJoystick" class="mobile-joystick" data-mobile-control="joystick" aria-label="Движение">
+        <i id="mobileJoystickKnob"></i>
+      </div>
+      <button id="mobileMenuButton" class="mobile-control-button mobile-menu-button" data-mobile-control="menu" type="button" aria-label="Меню">☰</button>
+      <button id="mobileFireButton" class="mobile-control-button mobile-fire-button" data-mobile-control="fire" type="button" aria-label="Огонь">●</button>
+      <button id="mobileJumpButton" class="mobile-control-button mobile-jump-button" data-mobile-control="jump" type="button" aria-label="Прыжок">↥</button>
+      <button id="mobileReloadButton" class="mobile-control-button mobile-reload-button" data-mobile-control="reload" type="button" aria-label="Перезарядка">R</button>
+      <button id="mobileInteractButton" class="mobile-control-button mobile-interact-button" data-mobile-control="interact" type="button" aria-label="Взаимодействие">E</button>
+      <button id="mobilePistolButton" class="mobile-control-button mobile-weapon-button mobile-pistol-button mobile-weapon-selected" data-mobile-control="pistol" type="button" aria-label="Пистолет">1</button>
+      <button id="mobileRifleButton" class="mobile-control-button mobile-weapon-button mobile-rifle-button" data-mobile-control="rifle" type="button" aria-label="Автомат">2</button>
+      <div id="mobileEditToolbar" class="mobile-edit-toolbar hidden" aria-label="Редактор управления">
+        <span id="mobileEditHint">Перетащите элемент управления</span>
+        <div class="mobile-edit-actions">
+          <button id="mobileEditSaveButton" type="button">Сохранить</button>
+          <button id="mobileEditCancelButton" type="button">Отмена</button>
+          <button id="mobileEditResetButton" type="button">Сбросить</button>
+        </div>
+      </div>
+    </div>
   </main>
 
   <script src="vendor/three.min.js"></script>
   <script src="config.js"></script>
   <script src="utils.js"></script>
   <script src="world.js?v=release-polish"></script>
-  <script src="player.js"></script>
+  <script src="player.js?v=mobile-ui-pass"></script>
   <script src="audio.js"></script>
   <script src="weapons.js"></script>
   <script src="npc.js?v=release-polish"></script>
@@ -220,6 +314,8 @@
   <script src="maps.js"></script>
   <script src="bases.js"></script>
   <script src="weather.js"></script>
-  <script src="main.js?v=release-polish"></script>
+  <script src="mobileControls.js?v=mobile-ui-pass"></script>
+  <script src="performance.js?v=mobile-performance-overhaul"></script>
+  <script src="main.js?v=mobile-performance-overhaul"></script>
 </body>
 </html>

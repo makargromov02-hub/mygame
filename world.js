@@ -19,6 +19,22 @@
       this.contactShadowData = [];
       this.renderOptimizedMeshes = [];
       this.renderOptimizeTimer = 0;
+      this.performanceProfile = {
+        renderCullDistance: 1900,
+        renderCullRadiusMultiplier: 3,
+        renderOptimizeInterval: 0.35,
+        shadowCastDistance: 1350,
+        shadowReceiveDistance: 2400,
+        physicsActiveDistance: 1250,
+        mobile: false
+      };
+      this.performanceStats = {
+        losChecks: 0,
+        collisionQueries: 0,
+        physicsObjects: 0,
+        physicsMs: 0,
+        shadowCasters: 0
+      };
       this.renderTempPosition = new THREE.Vector3();
       this.staticBatchGeometry = new THREE.BoxGeometry(1, 1, 1);
       this.decorBoxGeometry = new THREE.BoxGeometry(1, 1, 1);
@@ -88,6 +104,19 @@
       this.optimizeStaticMeshes();
       this.flushContactShadows();
       this.registerRenderOptimizations();
+    }
+
+    setPerformanceProfile(profile) {
+      this.performanceProfile = Object.assign({}, this.performanceProfile, profile || {});
+    }
+
+    consumePerformanceStats() {
+      const stats = Object.assign({}, this.performanceStats);
+      this.performanceStats.losChecks = 0;
+      this.performanceStats.collisionQueries = 0;
+      this.performanceStats.physicsObjects = 0;
+      this.performanceStats.physicsMs = 0;
+      return stats;
     }
 
     prepareObjects(sourceObjects) {
@@ -1756,10 +1785,12 @@
     updateRenderOptimizations(dt) {
       this.renderOptimizeTimer -= dt;
       if (this.renderOptimizeTimer > 0 || !this.physicsFocus) return;
-      this.renderOptimizeTimer = 0.35;
+      const profile = this.performanceProfile;
+      this.renderOptimizeTimer = profile.renderOptimizeInterval || 0.35;
 
       const focusX = this.physicsFocus.x || 0;
       const focusZ = this.physicsFocus.z || 0;
+      let shadowCasters = 0;
 
       for (const entry of this.renderOptimizedMeshes) {
         const mesh = entry.mesh;
@@ -1776,7 +1807,7 @@
         const distance = Math.hypot(dx, dz);
 
         if (entry.canDistanceCull) {
-          const shouldHide = distance > 1900 + entry.radius * 3;
+          const shouldHide = distance > (profile.renderCullDistance || 1900) + entry.radius * (profile.renderCullRadiusMultiplier || 3);
           if (shouldHide && mesh.visible) {
             mesh.userData.optimizedHidden = true;
             mesh.visible = false;
@@ -1786,9 +1817,11 @@
           }
         }
 
-        mesh.castShadow = entry.baseCastShadow && distance < 1350 && entry.radius > 18;
-        mesh.receiveShadow = entry.baseReceiveShadow && (distance < 2400 || entry.radius > 90);
+        mesh.castShadow = entry.baseCastShadow && distance < (profile.shadowCastDistance || 1350) && entry.radius > 18;
+        mesh.receiveShadow = entry.baseReceiveShadow && (distance < (profile.shadowReceiveDistance || 2400) || entry.radius > 90);
+        if (mesh.castShadow) shadowCasters += 1;
       }
+      this.performanceStats.shadowCasters = shadowCasters;
     }
 
     setPhysicsFocus(entity) {
@@ -1797,6 +1830,9 @@
 
     updatePhysicsObjects(dt) {
       const focus = this.physicsFocus;
+      const physicsStart = performance.now();
+      const activeDistance = this.performanceProfile.physicsActiveDistance || 1250;
+      let activePhysics = 0;
 
       for (const object of this.physicsObjects) {
         if (!object || object.destroyed || !object.mesh) continue;
@@ -1813,7 +1849,7 @@
         const support = this.getPhysicsSupportHeight(object, centerX, centerZ, object.baseY || 0);
         const airborne = (object.baseY || 0) > support + 0.5 || Math.abs(object.velocityY || 0) > 0.5;
 
-        if (focus && Math.hypot(centerX - focus.x, centerZ - focus.z) > 1250 && !airborne) {
+        if (focus && Math.hypot(centerX - focus.x, centerZ - focus.z) > activeDistance && !airborne) {
           object.velocityX = 0;
           object.velocityZ = 0;
           object.velocityY = 0;
@@ -1823,6 +1859,7 @@
         }
 
         object.sleeping = false;
+        activePhysics += 1;
         object.velocityX = (object.velocityX || 0) * Math.exp(-2.6 * dt);
         object.velocityZ = (object.velocityZ || 0) * Math.exp(-2.6 * dt);
         object.velocityY = Math.max(-360, (object.velocityY || 0) - 900 * dt);
@@ -1840,6 +1877,8 @@
           object.sleeping = true;
         }
       }
+      this.performanceStats.physicsObjects = activePhysics;
+      this.performanceStats.physicsMs = performance.now() - physicsStart;
     }
 
     ensurePhysicsState(object) {
@@ -2573,6 +2612,7 @@
     }
 
     getCollisionObject(x, z, radius, entityY) {
+      this.performanceStats.collisionQueries += 1;
       for (const object of this.getSpatialCandidates(x, z, radius + 8)) {
         if (object.solid === false) continue;
         if (object.type === 'building' && this.getLadderHeightAt(x, z, entityY || 0) !== null) continue;
@@ -2675,6 +2715,7 @@
     }
 
     hasLineOfSight(fromX, fromZ, toX, toZ) {
+      this.performanceStats.losChecks += 1;
       const dx = toX - fromX;
       const dz = toZ - fromZ;
       const distance = Math.hypot(dx, dz);

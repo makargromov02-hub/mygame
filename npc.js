@@ -185,6 +185,16 @@
         speed: NPC.speed,
         bulletSpread: NPC.bulletSpread
       };
+      this.performanceProfile = {
+        farAiDistance: FAR_AI_DISTANCE,
+        farAiInterval: FAR_AI_INTERVAL,
+        visionIntervalScale: 1,
+        mobile: false
+      };
+      this.performanceStats = {
+        activeAiMs: 0,
+        visionChecks: 0
+      };
       this.createGrenadePool();
 
       for (let i = 0; i < NPC.count; i += 1) {
@@ -198,6 +208,17 @@
 
     setBaseSystem(baseSystem) {
       this.baseSystem = baseSystem;
+    }
+
+    setPerformanceProfile(profile) {
+      this.performanceProfile = Object.assign({}, this.performanceProfile, profile || {});
+    }
+
+    consumePerformanceStats() {
+      const stats = Object.assign({}, this.performanceStats);
+      this.performanceStats.activeAiMs = 0;
+      this.performanceStats.visionChecks = 0;
+      return stats;
     }
 
     ensureNpcCount(count) {
@@ -670,6 +691,7 @@
     }
 
     update(dt, now) {
+      const aiStart = performance.now();
       this.updateGroupContext(now);
       this.updateGrenades(dt, now);
 
@@ -723,10 +745,11 @@
 
         this.syncMesh(npc, dt);
       }
+      this.performanceStats.activeAiMs = performance.now() - aiStart;
     }
 
     shouldUseFarAi(npc, distanceToPlayer, now) {
-      return distanceToPlayer > FAR_AI_DISTANCE
+      return distanceToPlayer > (this.performanceProfile.farAiDistance || FAR_AI_DISTANCE)
         && !npc.seesPlayer
         && now >= (npc.searchUntil || 0)
         && now >= (npc.alertedByAllyUntil || 0)
@@ -746,8 +769,9 @@
         return;
       }
 
-      npc.nextFarThinkAt = now + FAR_AI_INTERVAL + randomRange(-120, 180);
-      this.updateWander(npc, Math.max(dt, FAR_AI_INTERVAL / 1000), now);
+      const interval = this.performanceProfile.farAiInterval || FAR_AI_INTERVAL;
+      npc.nextFarThinkAt = now + interval + randomRange(-120, 180);
+      this.updateWander(npc, Math.max(dt, interval / 1000), now);
       this.updateVerticalPosition(npc, dt);
       npc.isMoving = npc.isMoving || this.hasPendingRenderMovement(npc);
       npc.walkTime += npc.isMoving ? dt * 8.5 : dt * 2.5;
@@ -944,8 +968,11 @@
       }
 
       const seesPlayer = this.canSeePlayer(npc, distanceToPlayer);
+      this.performanceStats.visionChecks += 1;
       const personality = npc.personality || {};
-      const baseInterval = seesPlayer ? 90 : 165;
+      const profileScale = this.performanceProfile.visionIntervalScale || 1;
+      const distanceScale = !seesPlayer && distanceToPlayer > (this.performanceProfile.farAiDistance || FAR_AI_DISTANCE) * 0.75 ? 1.25 : 1;
+      const baseInterval = (seesPlayer ? 90 : 165) * profileScale * distanceScale;
       npc.nextVisionAt = now + baseInterval * (1.06 - Math.min(0.22, (personality.perception || 1) - 0.92)) + randomRange(0, 75);
       return seesPlayer;
     }

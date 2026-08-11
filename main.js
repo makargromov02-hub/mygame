@@ -43,6 +43,17 @@
     debugMemory: document.getElementById('debugMemory'),
     debugGarbageCollections: document.getElementById('debugGarbageCollections'),
     debugParticles: document.getElementById('debugParticles'),
+    debugPerfProfile: document.getElementById('debugPerfProfile'),
+    debugRenderScale: document.getElementById('debugRenderScale'),
+    debugRaycasts: document.getElementById('debugRaycasts'),
+    debugLosChecks: document.getElementById('debugLosChecks'),
+    debugCollisionQueries: document.getElementById('debugCollisionQueries'),
+    debugNpcAiTime: document.getElementById('debugNpcAiTime'),
+    debugWorldTime: document.getElementById('debugWorldTime'),
+    debugWeaponsTime: document.getElementById('debugWeaponsTime'),
+    debugPhysicsTime: document.getElementById('debugPhysicsTime'),
+    debugShadowCasters: document.getElementById('debugShadowCasters'),
+    debugTextures: document.getElementById('debugTextures'),
     interactionPrompt: document.getElementById('interactionPrompt'),
     killFeed: document.getElementById('killFeed'),
     baseHud: document.getElementById('baseHud'),
@@ -56,6 +67,7 @@
     waveTimer: document.getElementById('waveTimer'),
     tabMenu: document.getElementById('tabMenu'),
     modeDialog: document.getElementById('modeDialog'),
+    resumeButton: document.getElementById('resumeButton'),
     modeButton: document.getElementById('modeButton'),
     mapButton: document.getElementById('mapButton'),
     freeModeButton: document.getElementById('freeModeButton'),
@@ -81,7 +93,40 @@
     shopMoney: document.getElementById('shopMoney'),
     shopMessage: document.getElementById('shopMessage'),
     nextWaveButton: document.getElementById('nextWaveButton'),
-    defeatMoney: document.getElementById('defeatMoney')
+    defeatMoney: document.getElementById('defeatMoney'),
+    deviceScreen: document.getElementById('deviceScreen'),
+    desktopDeviceButton: document.getElementById('desktopDeviceButton'),
+    mobileDeviceButton: document.getElementById('mobileDeviceButton'),
+    changeDeviceButton: document.getElementById('changeDeviceButton'),
+    mobileControls: document.getElementById('mobileControls'),
+    mobileLookZone: document.getElementById('mobileLookZone'),
+    mobileJoystick: document.getElementById('mobileJoystick'),
+    mobileJoystickKnob: document.getElementById('mobileJoystickKnob'),
+    mobileFireButton: document.getElementById('mobileFireButton'),
+    mobileJumpButton: document.getElementById('mobileJumpButton'),
+    mobileReloadButton: document.getElementById('mobileReloadButton'),
+    mobileInteractButton: document.getElementById('mobileInteractButton'),
+    mobileWeaponButton: document.getElementById('mobileWeaponButton'),
+    mobilePistolButton: document.getElementById('mobilePistolButton'),
+    mobileRifleButton: document.getElementById('mobileRifleButton'),
+    mobileMenuButton: document.getElementById('mobileMenuButton'),
+    mobileSensitivity: document.getElementById('mobile-sensitivity'),
+    mobileSensitivityValue: document.getElementById('mobile-sensitivity-value'),
+    mobileMenuSensitivity: document.getElementById('mobile-menu-sensitivity'),
+    mobileMenuSensitivityValue: document.getElementById('mobile-menu-sensitivity-value'),
+    mobilePerformanceProfile: document.getElementById('mobile-performance-profile'),
+    mobileFpsTarget: document.getElementById('mobile-fps-target'),
+    mobileControlScale: document.getElementById('mobile-control-scale'),
+    mobileControlScaleValue: document.getElementById('mobile-control-scale-value'),
+    mobileControlOpacity: document.getElementById('mobile-control-opacity'),
+    mobileControlOpacityValue: document.getElementById('mobile-control-opacity-value'),
+    mobileEditLayoutButton: document.getElementById('mobileEditLayoutButton'),
+    mobileResetControlsButton: document.getElementById('mobileResetControlsButton'),
+    mobileEditToolbar: document.getElementById('mobileEditToolbar'),
+    mobileEditHint: document.getElementById('mobileEditHint'),
+    mobileEditSaveButton: document.getElementById('mobileEditSaveButton'),
+    mobileEditCancelButton: document.getElementById('mobileEditCancelButton'),
+    mobileEditResetButton: document.getElementById('mobileEditResetButton')
   };
 
   const scene = new THREE.Scene();
@@ -140,26 +185,6 @@
       return true;
     }
   });
-  const mapSystem = new window.MapSelectionSystem(hud, {
-    onOpen() {
-      if (running) {
-        modeSystem.paused = true;
-        hud.tabMenu.classList.add('hidden');
-        hud.modeDialog.classList.add('hidden');
-        if (document.pointerLockElement) document.exitPointerLock();
-      }
-    },
-    onSelectImplemented() {
-      hud.tabMenu.classList.add('hidden');
-      hud.modeDialog.classList.add('hidden');
-      if (!running) {
-        startGame();
-        return;
-      }
-      modeSystem.paused = false;
-      requestPointerLockSafely();
-    }
-  });
 
   let running = false;
   let lastTime = performance.now();
@@ -180,13 +205,132 @@
   let smoothedRenderTime = 0;
   let lastHeapSize = 0;
   let garbageCollections = 0;
+  let debugDomNextAt = 0;
+  let mobileEditReturnPaused = false;
+  let mobileEditReturnTabOpen = false;
   const movementKeys = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight'];
+
+  const mapSystem = new window.MapSelectionSystem(hud, {
+    onOpen() {
+      if (running) {
+        modeSystem.paused = true;
+        hud.tabMenu.classList.add('hidden');
+        hud.modeDialog.classList.add('hidden');
+        if (document.pointerLockElement) document.exitPointerLock();
+      }
+    },
+    onSelectImplemented() {
+      hud.tabMenu.classList.add('hidden');
+      hud.modeDialog.classList.add('hidden');
+      if (!running) {
+        startGame();
+        return;
+      }
+      modeSystem.paused = false;
+      requestPointerLockSafely();
+    }
+  });
+  const mobileControls = new window.MobileControls(hud, {
+    move(x, z) {
+      player.setAnalogMove(x, z);
+    },
+    look(dx, dy) {
+      if (!modeSystem.paused) player.rotate(dx, dy);
+    },
+    fire(pressed) {
+      weapons.setMouseDown(pressed);
+      if (pressed && !modeSystem.paused) weapons.tryShoot(performance.now());
+    },
+    jump() {
+      if (!modeSystem.paused) player.jump();
+    },
+    reload() {
+      if (!modeSystem.paused) weapons.startReload(performance.now());
+    },
+    interact() {
+      if (modeSystem.paused) return;
+      handleInteraction();
+    },
+    switchWeapon(type) {
+      if (!modeSystem.paused) weapons.switchWeapon(type);
+    },
+    menu() {
+      modeSystem.togglePause();
+      updateMobileControlVisibility();
+    },
+    beginEdit() {
+      mobileEditReturnPaused = modeSystem.paused;
+      mobileEditReturnTabOpen = hud.tabMenu && !hud.tabMenu.classList.contains('hidden');
+      modeSystem.paused = true;
+      if (hud.tabMenu) hud.tabMenu.classList.add('hidden');
+      if (hud.modeDialog) hud.modeDialog.classList.add('hidden');
+      if (hud.mapDialog) hud.mapDialog.classList.add('hidden');
+      if (document.pointerLockElement) document.exitPointerLock();
+      updateMobileControlVisibility();
+    },
+    endEdit() {
+      modeSystem.paused = mobileEditReturnPaused;
+      if (hud.tabMenu) hud.tabMenu.classList.toggle('hidden', !mobileEditReturnTabOpen);
+      updateMobileControlVisibility();
+      if (running && !modeSystem.paused) requestPointerLockSafely();
+    }
+  });
+  const deviceMode = new window.DeviceModeSystem(hud, {
+    onChooserOpen() {
+      if (running) {
+        modeSystem.paused = true;
+        hud.tabMenu.classList.add('hidden');
+        hud.modeDialog.classList.add('hidden');
+        if (hud.mapDialog) hud.mapDialog.classList.add('hidden');
+        if (document.pointerLockElement) document.exitPointerLock();
+      }
+    },
+    onModeChange() {
+      if (running) {
+        modeSystem.paused = false;
+        hud.tabMenu.classList.add('hidden');
+        hud.modeDialog.classList.add('hidden');
+        if (hud.mapDialog) hud.mapDialog.classList.add('hidden');
+      }
+      updateMobileMode();
+      performanceManager.setMobileMode(deviceMode.isMobile());
+      if (running && !modeSystem.paused) requestPointerLockSafely();
+    }
+  });
+  const performanceManager = new window.MobilePerformanceManager({
+    renderer,
+    scene,
+    world,
+    weapons,
+    npcs,
+    weather: weatherSystem,
+    getIsMobile() {
+      return deviceMode.isMobile();
+    }
+  });
+  bindPerformanceSettings();
+  updateMobileMode();
+  performanceManager.setMobileMode(deviceMode.isMobile());
+
+  function bindPerformanceSettings() {
+    if (hud.mobilePerformanceProfile) {
+      hud.mobilePerformanceProfile.value = performanceManager.selectedProfile || 'AUTO';
+      hud.mobilePerformanceProfile.addEventListener('change', () => {
+        performanceManager.setProfile(hud.mobilePerformanceProfile.value);
+      });
+    }
+    if (hud.mobileFpsTarget) {
+      hud.mobileFpsTarget.value = performanceManager.targetMode || 'AUTO';
+      hud.mobileFpsTarget.addEventListener('change', () => {
+        performanceManager.setTargetMode(hud.mobileFpsTarget.value);
+      });
+    }
+  }
 
   function resize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    renderer.setSize(window.innerWidth, window.innerHeight);
+    performanceManager.resize(window.innerWidth, window.innerHeight);
   }
 
   function updateFps(now) {
@@ -263,6 +407,10 @@
     }
     smoothedCpuTime = smoothedCpuTime ? smoothedCpuTime + (lastCpuTime - smoothedCpuTime) * smoothing : lastCpuTime;
     smoothedRenderTime = smoothedRenderTime ? smoothedRenderTime + (lastRenderTime - smoothedRenderTime) * smoothing : lastRenderTime;
+    const perfStats = performanceManager.getDebugStats ? performanceManager.getDebugStats() : {};
+    const debugNow = performance.now();
+    if (debugNow < debugDomNextAt) return;
+    debugDomNextAt = debugNow + 250;
 
     hud.debugFps.textContent = smoothedFps.toFixed(1);
     hud.debugFrameTime.textContent = smoothedFrameTime.toFixed(2) + ' ms';
@@ -280,6 +428,17 @@
     hud.debugMemory.textContent = memory;
     if (hud.debugGarbageCollections) hud.debugGarbageCollections.textContent = String(garbageCollections);
     hud.debugParticles.textContent = String(activeParticles) + ' / ' + weapons.effects.length;
+    if (hud.debugPerfProfile) hud.debugPerfProfile.textContent = (perfStats.profile || 'DESKTOP') + (perfStats.adaptiveStage ? ' +' + perfStats.adaptiveStage : '');
+    if (hud.debugRenderScale) hud.debugRenderScale.textContent = Number(perfStats.renderScale || 1).toFixed(2) + 'x / ' + (perfStats.targetFps || 60);
+    if (hud.debugRaycasts) hud.debugRaycasts.textContent = String(perfStats.raycasts || 0);
+    if (hud.debugLosChecks) hud.debugLosChecks.textContent = String(perfStats.losChecks || 0);
+    if (hud.debugCollisionQueries) hud.debugCollisionQueries.textContent = String(perfStats.collisionQueries || 0);
+    if (hud.debugNpcAiTime) hud.debugNpcAiTime.textContent = Number(perfStats.npcAiMs || 0).toFixed(2) + ' ms';
+    if (hud.debugWorldTime) hud.debugWorldTime.textContent = Number(perfStats.worldMs || 0).toFixed(2) + ' ms';
+    if (hud.debugWeaponsTime) hud.debugWeaponsTime.textContent = Number(perfStats.weaponsMs || 0).toFixed(2) + ' ms';
+    if (hud.debugPhysicsTime) hud.debugPhysicsTime.textContent = Number(perfStats.physicsMs || 0).toFixed(2) + ' ms';
+    if (hud.debugShadowCasters) hud.debugShadowCasters.textContent = String(perfStats.shadowCasters || 0);
+    if (hud.debugTextures) hud.debugTextures.textContent = String(perfStats.textures || 0) + ' / ' + String(perfStats.geometries || 0);
   }
 
   function formatNumber(value) {
@@ -297,26 +456,75 @@
     }
   }
 
+  function handleInteraction() {
+    if (world.interactWithLook(player)) {
+      return;
+    }
+
+    if (!loot.tryCollectNearest()) {
+      world.toggleNearestDoor(player.x, player.z, player.y);
+    }
+  }
+
+  function isModalOpen() {
+    return (hud.deviceScreen && !hud.deviceScreen.classList.contains('hidden'))
+      || (hud.modeDialog && !hud.modeDialog.classList.contains('hidden'))
+      || (hud.mapDialog && !hud.mapDialog.classList.contains('hidden'))
+      || (hud.shopScreen && !hud.shopScreen.classList.contains('hidden'))
+      || (hud.defeatScreen && !hud.defeatScreen.classList.contains('hidden'));
+  }
+
+  function updateMobileMode() {
+    releasePointerLockForMobile();
+    mobileControls.setEnabled(deviceMode.isMobile());
+    updateMobileControlVisibility();
+  }
+
+  function releasePointerLockForMobile() {
+    if (deviceMode && deviceMode.isMobile() && document.pointerLockElement) {
+      document.exitPointerLock();
+    }
+  }
+
+  function updateMobileControlVisibility() {
+    mobileControls.setVisible(deviceMode.isMobile() && running && !modeSystem.paused && !isModalOpen());
+  }
+
   function gameLoop(now) {
     if (!running) return;
 
     const dt = Math.min((now - lastTime) / 1000, 0.05);
     lastTime = now;
     const cpuStart = performance.now();
+    performanceManager.beginFrame();
 
     if (!modeSystem.paused) {
+      let sectionStart = performance.now();
+      updateMobileControlVisibility();
+      mobileControls.update(dt);
       player.update(dt);
+      performanceManager.recordSection('player', performance.now() - sectionStart);
+      sectionStart = performance.now();
       npcs.update(dt, now);
+      const npcStats = npcs.consumePerformanceStats ? npcs.consumePerformanceStats() : null;
+      performanceManager.recordSection('npc', npcStats ? npcStats.activeAiMs : performance.now() - sectionStart);
+      sectionStart = performance.now();
       world.update(dt);
+      performanceManager.recordSection('world', performance.now() - sectionStart);
+      sectionStart = performance.now();
       weapons.update(dt, now, npcs);
+      performanceManager.recordSection('weapons', performance.now() - sectionStart);
+      sectionStart = performance.now();
       loot.update(dt, now);
       baseSystem.update(dt, now);
       weatherSystem.update(dt);
       world.updateInteractionPrompt(player, hud.interactionPrompt);
       audio.update(dt, player);
       modeSystem.update(dt, now);
+      performanceManager.recordSection('systems', performance.now() - sectionStart);
     } else if (hud.interactionPrompt) {
       hud.interactionPrompt.classList.add('hidden');
+      updateMobileControlVisibility();
     }
 
     hudSystem.update(now);
@@ -325,6 +533,7 @@
     lastCpuTime = renderStart - cpuStart;
     renderer.render(scene, camera);
     lastRenderTime = performance.now() - renderStart;
+    performanceManager.update(dt, { cpuMs: lastCpuTime, renderMs: lastRenderTime });
     updateDebugOverlay(dt);
     updateFps(now);
 
@@ -335,6 +544,7 @@
     if (running) {
       startScreen.classList.add('hidden');
       requestPointerLockSafely();
+      updateMobileControlVisibility();
       return;
     }
 
@@ -342,6 +552,8 @@
     startScreen.classList.add('hidden');
     audio.resume();
     requestPointerLockSafely();
+    releasePointerLockForMobile();
+    updateMobileControlVisibility();
     lastTime = performance.now();
     fpsTime = lastTime;
     frameCount = 0;
@@ -349,6 +561,10 @@
   }
 
   function requestPointerLockSafely() {
+    if (deviceMode && deviceMode.isMobile()) {
+      releasePointerLockForMobile();
+      return;
+    }
     const lockRequest = renderer.domElement.requestPointerLock();
 
     if (lockRequest && typeof lockRequest.catch === 'function') {
@@ -357,6 +573,7 @@
   }
 
   window.addEventListener('resize', resize);
+  document.addEventListener('pointerlockchange', releasePointerLockForMobile);
 
   window.addEventListener('keydown', (event) => {
     const gameKeys = [
@@ -393,11 +610,13 @@
         if (running) {
           modeSystem.paused = false;
           requestPointerLockSafely();
+          updateMobileControlVisibility();
         }
         return;
       }
 
       modeSystem.togglePause();
+      updateMobileControlVisibility();
       return;
     }
 
@@ -418,13 +637,7 @@
     }
 
     if (event.code === 'KeyE' && !event.repeat) {
-      if (world.interactWithLook(player)) {
-        return;
-      }
-
-      if (!loot.tryCollectNearest()) {
-        world.toggleNearestDoor(player.x, player.z, player.y);
-      }
+      handleInteraction();
     }
 
     if (event.code === 'Digit1') {
@@ -455,17 +668,17 @@
   });
 
   window.addEventListener('mousedown', (event) => {
-    if (event.target.closest && event.target.closest('.audio-panel, .tab-menu, .mode-dialog, .map-dialog, .shop-screen, .defeat-screen')) return;
+    if (event.target.closest && event.target.closest('.audio-panel, .tab-menu, .mode-dialog, .map-dialog, .shop-screen, .defeat-screen, .device-screen, .start-screen, .mobile-controls')) return;
     if (modeSystem.paused) return;
 
     if (event.button === 0) {
-      if (document.pointerLockElement !== renderer.domElement) {
+      if (!deviceMode.isMobile() && document.pointerLockElement !== renderer.domElement) {
         requestPointerLockSafely();
       }
       weapons.setMouseDown(true);
       weapons.tryShoot(performance.now());
     } else if (event.button === 2) {
-      if (document.pointerLockElement !== renderer.domElement) {
+      if (!deviceMode.isMobile() && document.pointerLockElement !== renderer.domElement) {
         requestPointerLockSafely();
       }
       weapons.setAiming(true);
@@ -485,6 +698,16 @@
   });
 
   playButton.addEventListener('click', startGame);
+
+  if (hud.resumeButton) {
+    hud.resumeButton.addEventListener('click', () => {
+      if (!running) return;
+      modeSystem.paused = false;
+      hud.tabMenu.classList.add('hidden');
+      updateMobileControlVisibility();
+      requestPointerLockSafely();
+    });
+  }
 
   audioToggle.addEventListener('click', (event) => {
     event.stopPropagation();
