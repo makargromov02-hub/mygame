@@ -100,7 +100,10 @@
       document.addEventListener('touchmove', this.preventTouchDefault, { passive: false });
       document.addEventListener('gesturestart', this.preventTouchDefault, { passive: false });
       window.addEventListener('resize', () => this.applyLayout());
-      if (window.visualViewport) window.visualViewport.addEventListener('resize', () => this.applyLayout());
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', () => this.applyLayout());
+        window.visualViewport.addEventListener('scroll', () => this.applyLayout());
+      }
       this.bindUi();
       this.setEnabled(false);
     }
@@ -261,7 +264,7 @@
         if (!this.enabled || this.joystickPointerId !== null) return;
         event.preventDefault();
         this.joystickPointerId = event.pointerId;
-        joystick.setPointerCapture(event.pointerId);
+        this.safeSetPointerCapture(joystick, event.pointerId);
         const rect = joystick.getBoundingClientRect();
         this.joystickCenter.x = rect.left + rect.width / 2;
         this.joystickCenter.y = rect.top + rect.height / 2;
@@ -293,7 +296,7 @@
         this.lastLook.y = event.clientY;
         this.pendingLook.x = 0;
         this.pendingLook.y = 0;
-        lookZone.setPointerCapture(event.pointerId);
+        this.safeSetPointerCapture(lookZone, event.pointerId);
       });
 
       lookZone.addEventListener('pointermove', (event) => {
@@ -316,7 +319,7 @@
       button.addEventListener('pointerdown', (event) => {
         if (!this.enabled) return;
         event.preventDefault();
-        button.setPointerCapture(event.pointerId);
+        this.safeSetPointerCapture(button, event.pointerId);
         this.firePointerIds.add(event.pointerId);
         button.classList.add('mobile-control-active');
         callback(true);
@@ -341,12 +344,21 @@
       button.addEventListener('pointerdown', (event) => {
         if (!this.enabled) return;
         event.preventDefault();
-        button.setPointerCapture(event.pointerId);
+        this.safeSetPointerCapture(button, event.pointerId);
         button.classList.add('mobile-control-active');
         callback();
       });
       button.addEventListener('pointerup', () => button.classList.remove('mobile-control-active'));
       button.addEventListener('pointercancel', () => button.classList.remove('mobile-control-active'));
+    }
+
+    safeSetPointerCapture(element, pointerId) {
+      if (!element || !element.setPointerCapture) return;
+      try {
+        element.setPointerCapture(pointerId);
+      } catch (error) {
+        // Orientation changes can invalidate active mobile pointers between events.
+      }
     }
 
     updateJoystick(clientX, clientY) {
@@ -638,17 +650,29 @@
       this.enabled = Boolean(enabled);
       if (!this.enabled) {
         if (this.editMode) this.cancelEditMode();
-        this.joystickPointerId = null;
-        this.lookPointerId = null;
-        this.firePointerIds.clear();
-        this.pendingLook.x = 0;
-        this.pendingLook.y = 0;
-        if (this.handlers.move) this.handlers.move(0, 0);
-        if (this.handlers.fire) this.handlers.fire(false);
-        if (this.elements.mobileJoystick) this.elements.mobileJoystick.classList.remove('mobile-joystick-active');
-        if (this.elements.mobileJoystickKnob) this.elements.mobileJoystickKnob.style.transform = 'translate(0, 0)';
+        this.resetActivePointers();
       }
       this.updateVisibility();
+    }
+
+    handleViewportChange() {
+      this.resetActivePointers();
+      this.applyLayout();
+    }
+
+    resetActivePointers() {
+      this.joystickPointerId = null;
+      this.lookPointerId = null;
+      this.firePointerIds.clear();
+      this.pendingLook.x = 0;
+      this.pendingLook.y = 0;
+      if (this.handlers.move) this.handlers.move(0, 0);
+      if (this.handlers.fire) this.handlers.fire(false);
+      if (this.elements.mobileJoystick) this.elements.mobileJoystick.classList.remove('mobile-joystick-active');
+      if (this.elements.mobileJoystickKnob) this.elements.mobileJoystickKnob.style.transform = 'translate(0, 0)';
+      for (const element of Object.values(this.editableControls)) {
+        element.classList.remove('mobile-control-active');
+      }
     }
 
     setVisible(visible) {

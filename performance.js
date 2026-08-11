@@ -204,8 +204,17 @@
       } else {
         this.applyMobileProfile(profile);
       }
-      this.resize(window.innerWidth, window.innerHeight);
+      const size = this.getViewportSize();
+      this.resize(size.width, size.height);
       this.updateStats(profileName);
+    }
+
+    getViewportSize() {
+      const viewport = this.mobile ? window.visualViewport : null;
+      return {
+        width: Math.max(1, Math.round(viewport && viewport.width ? viewport.width : window.innerWidth)),
+        height: Math.max(1, Math.round(viewport && viewport.height ? viewport.height : window.innerHeight))
+      };
     }
 
     resolveTargetFps(profileName) {
@@ -339,7 +348,8 @@
       }
 
       if (changed) {
-        this.resize(window.innerWidth, window.innerHeight);
+        const size = this.getViewportSize();
+        this.resize(size.width, size.height);
       }
       this.updateStats(this.getResolvedProfileName(), frameStats);
     }

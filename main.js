@@ -116,6 +116,7 @@
     mobileMenuSensitivityValue: document.getElementById('mobile-menu-sensitivity-value'),
     mobilePerformanceProfile: document.getElementById('mobile-performance-profile'),
     mobileFpsTarget: document.getElementById('mobile-fps-target'),
+    mobileFullscreenButton: document.getElementById('mobileFullscreenButton'),
     mobileControlScale: document.getElementById('mobile-control-scale'),
     mobileControlScaleValue: document.getElementById('mobile-control-scale-value'),
     mobileControlOpacity: document.getElementById('mobile-control-opacity'),
@@ -126,7 +127,8 @@
     mobileEditHint: document.getElementById('mobileEditHint'),
     mobileEditSaveButton: document.getElementById('mobileEditSaveButton'),
     mobileEditCancelButton: document.getElementById('mobileEditCancelButton'),
-    mobileEditResetButton: document.getElementById('mobileEditResetButton')
+    mobileEditResetButton: document.getElementById('mobileEditResetButton'),
+    mobileRotateOverlay: document.getElementById('mobileRotateOverlay')
   };
 
   const scene = new THREE.Scene();
@@ -208,6 +210,12 @@
   let debugDomNextAt = 0;
   let mobileEditReturnPaused = false;
   let mobileEditReturnTabOpen = false;
+  let mobileViewportRaf = 0;
+  let mobileViewportTimer = 0;
+  let mobileViewportLastWidth = 0;
+  let mobileViewportLastHeight = 0;
+  let mobilePortraitPauseActive = false;
+  let mobilePortraitPreviousPaused = false;
   const movementKeys = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight'];
 
   const mapSystem = new window.MapSelectionSystem(hud, {
@@ -309,28 +317,155 @@
     }
   });
   bindPerformanceSettings();
+  bindMobileViewportEvents();
   updateMobileMode();
   performanceManager.setMobileMode(deviceMode.isMobile());
+  updateMobileViewport('initial');
 
   function bindPerformanceSettings() {
     if (hud.mobilePerformanceProfile) {
       hud.mobilePerformanceProfile.value = performanceManager.selectedProfile || 'AUTO';
       hud.mobilePerformanceProfile.addEventListener('change', () => {
         performanceManager.setProfile(hud.mobilePerformanceProfile.value);
+        scheduleMobileViewportUpdate('profile');
       });
     }
     if (hud.mobileFpsTarget) {
       hud.mobileFpsTarget.value = performanceManager.targetMode || 'AUTO';
       hud.mobileFpsTarget.addEventListener('change', () => {
         performanceManager.setTargetMode(hud.mobileFpsTarget.value);
+        scheduleMobileViewportUpdate('fpsTarget');
       });
+    }
+    if (hud.mobileFullscreenButton) {
+      hud.mobileFullscreenButton.addEventListener('click', () => requestMobileFullscreen());
     }
   }
 
+  function getViewportSize() {
+    const viewport = window.visualViewport;
+    const useVisualViewport = deviceMode && deviceMode.isMobile() && viewport && viewport.width > 0 && viewport.height > 0;
+    return {
+      width: Math.max(1, Math.round(useVisualViewport ? viewport.width : window.innerWidth)),
+      height: Math.max(1, Math.round(useVisualViewport ? viewport.height : window.innerHeight))
+    };
+  }
+
   function resize() {
-    camera.aspect = window.innerWidth / window.innerHeight;
+    updateMobileViewport('resize');
+  }
+
+  function updateMobileViewport(reason) {
+    const size = getViewportSize();
+    mobileViewportLastWidth = size.width;
+    mobileViewportLastHeight = size.height;
+    document.documentElement.style.setProperty('--app-width', size.width + 'px');
+    document.documentElement.style.setProperty('--app-height', size.height + 'px');
+
+    camera.aspect = size.width / size.height;
     camera.updateProjectionMatrix();
-    performanceManager.resize(window.innerWidth, window.innerHeight);
+    performanceManager.resize(size.width, size.height);
+    if (deviceMode && deviceMode.isMobile() && mobileControls && mobileControls.handleViewportChange) {
+      mobileControls.handleViewportChange();
+    }
+    updateMobileOrientationState(reason);
+    updateMobileControlVisibility();
+  }
+
+  function scheduleMobileViewportUpdate(reason) {
+    if (mobileViewportRaf) cancelAnimationFrame(mobileViewportRaf);
+    if (mobileViewportTimer) clearTimeout(mobileViewportTimer);
+    if (deviceMode && deviceMode.isMobile() && shouldResetMobilePointers(reason, getViewportSize()) && mobileControls && mobileControls.resetActivePointers) {
+      mobileControls.resetActivePointers();
+    }
+    mobileViewportRaf = requestAnimationFrame(() => {
+      mobileViewportRaf = 0;
+      updateMobileViewport(reason);
+      mobileViewportTimer = setTimeout(() => {
+        mobileViewportTimer = 0;
+        updateMobileViewport(reason + ':settled');
+      }, 180);
+    });
+  }
+
+  function bindMobileViewportEvents() {
+    window.addEventListener('resize', () => scheduleMobileViewportUpdate('resize'), { passive: true });
+    window.addEventListener('orientationchange', () => scheduleMobileViewportUpdate('orientationchange'), { passive: true });
+    window.addEventListener('fullscreenchange', () => scheduleMobileViewportUpdate('fullscreen'), { passive: true });
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', () => scheduleMobileViewportUpdate('visualViewport'), { passive: true });
+      window.visualViewport.addEventListener('scroll', () => scheduleMobileViewportUpdate('visualViewportScroll'), { passive: true });
+    }
+    if (screen.orientation && screen.orientation.addEventListener) {
+      screen.orientation.addEventListener('change', () => scheduleMobileViewportUpdate('screenOrientation'));
+    }
+  }
+
+  function shouldResetMobilePointers(reason, nextSize) {
+    const hadSize = mobileViewportLastWidth > 0 && mobileViewportLastHeight > 0;
+    const orientationChanged = hadSize
+      && nextSize
+      && (mobileViewportLastHeight > mobileViewportLastWidth) !== (nextSize.height > nextSize.width);
+    return reason === 'resize'
+      || reason === 'orientationchange'
+      || reason === 'screenOrientation'
+      || reason === 'fullscreen'
+      || reason === 'fullscreenRequest'
+      || reason === 'mode'
+      || reason === 'start'
+      || orientationChanged;
+  }
+
+  function isMobilePortraitGameplay() {
+    if (!deviceMode || !deviceMode.isMobile() || !running) return false;
+    if (isModalOpen()) return false;
+    if (modeSystem.paused && !mobilePortraitPauseActive) return false;
+    const size = getViewportSize();
+    return size.height > size.width;
+  }
+
+  function updateMobileOrientationState() {
+    const shouldBlock = isMobilePortraitGameplay();
+    document.body.classList.toggle('mobile-portrait-gameplay', shouldBlock);
+    if (hud.mobileRotateOverlay) {
+      hud.mobileRotateOverlay.classList.toggle('hidden', !shouldBlock);
+    }
+    if (shouldBlock && !mobilePortraitPauseActive) {
+      mobilePortraitPauseActive = true;
+      mobilePortraitPreviousPaused = modeSystem.paused;
+      modeSystem.paused = true;
+      if (mobileControls && mobileControls.resetActivePointers) mobileControls.resetActivePointers();
+    } else if (!shouldBlock && mobilePortraitPauseActive) {
+      mobilePortraitPauseActive = false;
+      modeSystem.paused = mobilePortraitPreviousPaused;
+      mobilePortraitPreviousPaused = false;
+      if (mobileControls && mobileControls.handleViewportChange) mobileControls.handleViewportChange();
+    }
+  }
+
+  function requestMobileFullscreen() {
+    if (!deviceMode || !deviceMode.isMobile()) return;
+    const root = document.documentElement;
+    const request = root.requestFullscreen || root.webkitRequestFullscreen;
+    if (request) {
+      let fullscreenPromise;
+      try {
+        fullscreenPromise = request.call(root);
+      } catch (error) {
+        scheduleMobileViewportUpdate('fullscreenRejected');
+        return;
+      }
+      Promise.resolve(fullscreenPromise)
+        .then(() => {
+          if (screen.orientation && screen.orientation.lock) {
+            return screen.orientation.lock('landscape').catch(() => {});
+          }
+          return null;
+        })
+        .finally(() => scheduleMobileViewportUpdate('fullscreenRequest'));
+    } else {
+      scheduleMobileViewportUpdate('fullscreenUnavailable');
+    }
   }
 
   function updateFps(now) {
@@ -477,6 +612,7 @@
   function updateMobileMode() {
     releasePointerLockForMobile();
     mobileControls.setEnabled(deviceMode.isMobile());
+    scheduleMobileViewportUpdate('mode');
     updateMobileControlVisibility();
   }
 
@@ -557,6 +693,7 @@
     lastTime = performance.now();
     fpsTime = lastTime;
     frameCount = 0;
+    updateMobileViewport('start');
     requestAnimationFrame(gameLoop);
   }
 
@@ -572,7 +709,6 @@
     }
   }
 
-  window.addEventListener('resize', resize);
   document.addEventListener('pointerlockchange', releasePointerLockForMobile);
 
   window.addEventListener('keydown', (event) => {
