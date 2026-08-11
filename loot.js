@@ -22,7 +22,29 @@
       this.items = [];
       this.nextId = 1;
       this.autoPickup = LOOT.autoPickup;
+      this.sharedGeometry = new THREE.BoxGeometry(1, 1, 1);
+      this.sharedGeometry.userData.sharedLootResource = true;
+      this.sharedMaterials = {
+        health: this.createSharedMaterial(LOOT.health.color),
+        armor: this.createSharedMaterial(LOOT.armor.color),
+        ammoPistol: this.createSharedMaterial(LOOT.ammoPistol.color),
+        ammoRifle: this.createSharedMaterial(LOOT.ammoRifle.color),
+        band: new THREE.MeshStandardMaterial({ color: 0x1a2028, roughness: 0.7 })
+      };
+      this.sharedMaterials.band.userData.sharedLootResource = true;
       this.spawnInitialLoot();
+    }
+
+    createSharedMaterial(color) {
+      const material = new THREE.MeshStandardMaterial({
+        color,
+        roughness: 0.42,
+        metalness: 0.08,
+        emissive: color,
+        emissiveIntensity: 0.16
+      });
+      material.userData.sharedLootResource = true;
+      return material;
     }
 
     spawnInitialLoot() {
@@ -89,13 +111,7 @@
 
     createMesh(type, color) {
       const group = new THREE.Group();
-      const material = new THREE.MeshStandardMaterial({
-        color,
-        roughness: 0.42,
-        metalness: 0.08,
-        emissive: color,
-        emissiveIntensity: 0.16
-      });
+      const material = this.sharedMaterials[type] || this.createSharedMaterial(color);
 
       if (type === 'health') {
         group.add(this.box({ x: 30, y: 12, z: 20 }, material));
@@ -106,7 +122,7 @@
         group.add(vest);
       } else {
         group.add(this.box({ x: 30, y: 18, z: 24 }, material));
-        const band = this.box({ x: 34, y: 4, z: 28 }, new THREE.MeshStandardMaterial({ color: 0x1a2028, roughness: 0.7 }));
+        const band = this.box({ x: 34, y: 4, z: 28 }, this.sharedMaterials.band);
         band.position.y = 4;
         group.add(band);
       }
@@ -118,7 +134,8 @@
     }
 
     box(size, material) {
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(size.x, size.y, size.z), material);
+      const mesh = new THREE.Mesh(this.sharedGeometry, material);
+      mesh.scale.set(size.x, size.y, size.z);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       return mesh;
@@ -228,8 +245,8 @@
       if (!item) return;
       this.scene.remove(item.mesh);
       item.mesh.traverse((child) => {
-        if (child.geometry) child.geometry.dispose();
-        if (child.material) child.material.dispose();
+        if (child.geometry && !child.geometry.userData.sharedLootResource) child.geometry.dispose();
+        if (child.material && !child.material.userData.sharedLootResource) child.material.dispose();
       });
       this.items.splice(index, 1);
     }

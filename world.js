@@ -3,6 +3,7 @@
 
   const { WORLD, MAP_OBJECTS } = window.GameConfig;
   const { clamp, circleIntersectsRect, circleIntersectsCircle, randomRange } = window.GameUtils;
+  const WORLD_UP = new THREE.Vector3(0, 1, 0);
 
   class GameWorld {
     constructor(scene) {
@@ -20,11 +21,29 @@
       this.renderOptimizeTimer = 0;
       this.renderTempPosition = new THREE.Vector3();
       this.staticBatchGeometry = new THREE.BoxGeometry(1, 1, 1);
+      this.decorBoxGeometry = new THREE.BoxGeometry(1, 1, 1);
+      this.decorPlaneGeometry = new THREE.PlaneGeometry(1, 1);
       this.staticBatchMatrix = new THREE.Matrix4();
       this.staticBatchScale = new THREE.Vector3();
       this.staticBatchPosition = new THREE.Vector3();
       this.staticBatchQuaternion = new THREE.Quaternion();
       this.staticBatchProtected = new Set();
+      this.decorBatchMatrix = new THREE.Matrix4();
+      this.decorBatchPosition = new THREE.Vector3();
+      this.decorBatchQuaternion = new THREE.Quaternion();
+      this.decorBatchScale = new THREE.Vector3();
+      this.decorBatchEuler = new THREE.Euler();
+      this.ragdollGeometries = [
+        new THREE.BoxGeometry(26, 34, 14),
+        new THREE.BoxGeometry(20, 20, 20),
+        new THREE.BoxGeometry(9, 28, 9),
+        new THREE.BoxGeometry(9, 28, 9),
+        new THREE.BoxGeometry(10, 32, 10),
+        new THREE.BoxGeometry(10, 32, 10)
+      ];
+      for (const geometry of this.ragdollGeometries) {
+        geometry.userData.sharedRagdollResource = true;
+      }
       this.bulletImpactPoint = new THREE.Vector3();
       this.bulletImpactNormal = new THREE.Vector3();
       this.bulletImpactTravel = new THREE.Vector3();
@@ -65,6 +84,7 @@
       this.buildLighting();
       this.buildGround();
       this.buildObjects();
+      this.buildVisualDetailLayer();
       this.optimizeStaticMeshes();
       this.flushContactShadows();
       this.registerRenderOptimizations();
@@ -362,7 +382,9 @@
       return {
         ground: this.createNoiseTexture(0x243326, 0x314632, 256, 1600),
         road: this.createRoadTexture(),
+        sidewalk: this.createSidewalkTexture(),
         concrete: this.createNoiseTexture(0x5d6670, 0x434b54, 256, 900),
+        roof: this.createNoiseTexture(0x303944, 0x49545f, 256, 720),
         crate: this.createStripedTexture(0x8a6844, 0x5b3b22, 128),
         containerBlue: this.createStripedTexture(0x31546d, 0x1e3446, 128),
         containerRed: this.createStripedTexture(0x74403c, 0x4b2828, 128)
@@ -393,18 +415,70 @@
       return texture;
     }
 
+    createSidewalkTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 256;
+      canvas.height = 256;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#5f6970';
+      ctx.fillRect(0, 0, 256, 256);
+
+      ctx.strokeStyle = 'rgba(36, 42, 48, 0.42)';
+      ctx.lineWidth = 3;
+      for (let x = 0; x <= 256; x += 64) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, 256);
+        ctx.stroke();
+      }
+      for (let y = 0; y <= 256; y += 64) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(256, y);
+        ctx.stroke();
+      }
+
+      for (let i = 0; i < 520; i += 1) {
+        const shade = Math.floor(randomRange(82, 125));
+        ctx.fillStyle = 'rgba(' + shade + ',' + shade + ',' + shade + ',0.22)';
+        ctx.fillRect(Math.random() * 256, Math.random() * 256, randomRange(1, 4), randomRange(1, 4));
+      }
+
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      texture.colorSpace = THREE.SRGBColorSpace;
+      return texture;
+    }
+
     createRoadTexture() {
       const canvas = document.createElement('canvas');
       canvas.width = 256;
       canvas.height = 256;
       const ctx = canvas.getContext('2d');
-      ctx.fillStyle = '#293039';
+      ctx.fillStyle = '#262d35';
       ctx.fillRect(0, 0, 256, 256);
 
       for (let i = 0; i < 900; i += 1) {
         const shade = Math.floor(randomRange(35, 66));
         ctx.fillStyle = 'rgba(' + shade + ',' + shade + ',' + shade + ',0.34)';
         ctx.fillRect(Math.random() * 256, Math.random() * 256, randomRange(1, 4), randomRange(1, 4));
+      }
+
+      ctx.strokeStyle = 'rgba(14, 18, 22, 0.26)';
+      ctx.lineWidth = 2;
+      for (let i = 0; i < 22; i += 1) {
+        ctx.beginPath();
+        const sx = randomRange(0, 256);
+        const sy = randomRange(0, 256);
+        ctx.moveTo(sx, sy);
+        ctx.bezierCurveTo(sx + randomRange(-30, 30), sy + randomRange(12, 44), sx + randomRange(-45, 45), sy + randomRange(46, 92), sx + randomRange(-20, 20), sy + randomRange(90, 150));
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = 'rgba(13, 16, 19, 0.18)';
+      for (let i = 0; i < 24; i += 1) {
+        ctx.fillRect(randomRange(0, 232), randomRange(0, 232), randomRange(10, 34), randomRange(6, 24));
       }
 
       ctx.strokeStyle = 'rgba(235, 214, 142, 0.55)';
@@ -511,7 +585,7 @@
 
       const grid = new THREE.GridHelper(WORLD.width, WORLD.width / WORLD.grid, 0x6f7d8c, 0x36424d);
       grid.position.set(WORLD.width / 2, 0.35, WORLD.height / 2);
-      grid.material.opacity = 0.18;
+      grid.material.opacity = 0.07;
       grid.material.transparent = true;
       this.group.add(grid);
 
@@ -530,6 +604,244 @@
           this.buildCircleObject(object);
         }
       }
+    }
+
+    buildVisualDetailLayer() {
+      const materials = {
+        lanePaint: new THREE.MeshStandardMaterial({ color: 0xd8cf9a, roughness: 0.92, metalness: 0 }),
+        crosswalk: new THREE.MeshStandardMaterial({ color: 0xd8dadd, roughness: 0.88, metalness: 0 }),
+        curb: new THREE.MeshStandardMaterial({ color: 0x8a9298, roughness: 0.86, metalness: 0.02 }),
+        sidewalk: new THREE.MeshStandardMaterial({ color: 0x7a858b, map: this.textures.sidewalk, roughness: 0.92, metalness: 0 }),
+        grass: new THREE.MeshStandardMaterial({ color: 0x486f45, roughness: 0.96, metalness: 0 }),
+        shrub: new THREE.MeshStandardMaterial({ color: 0x2f6741, roughness: 0.94, metalness: 0 }),
+        facadeTrim: new THREE.MeshStandardMaterial({ color: 0x2f3942, roughness: 0.76, metalness: 0.05 }),
+        awning: new THREE.MeshStandardMaterial({ color: 0x8f3f3a, roughness: 0.68, metalness: 0.08 }),
+        roofMetal: new THREE.MeshStandardMaterial({ color: 0x51606b, roughness: 0.58, metalness: 0.28 }),
+        trash: new THREE.MeshStandardMaterial({ color: 0x4d5559, roughness: 0.88, metalness: 0.06 }),
+        concrete: new THREE.MeshStandardMaterial({ color: 0x777d80, roughness: 0.92, metalness: 0.02 })
+      };
+
+      this.addRoadMarkDetails(materials);
+      this.addSidewalkAndCurbDetails(materials);
+      this.addBuildingVisualDetails(materials);
+      this.addVegetationDetailClusters(materials);
+      this.addSmallUrbanDetails(materials);
+    }
+
+    addRoadMarkDetails(materials) {
+      const centerMarks = [];
+      for (let z = 150; z < WORLD.height - 130; z += 230) {
+        centerMarks.push({ x: 2500, y: 1.18, z, w: 10, h: 0.1, d: 86 });
+      }
+      for (let x = 150; x < WORLD.width - 130; x += 230) {
+        centerMarks.push({ x, y: 1.2, z: 2520, w: 86, h: 0.1, d: 10 });
+      }
+      for (let x = 905; x < 2220; x += 210) {
+        centerMarks.push({ x, y: 1.2, z: 820, w: 78, h: 0.1, d: 8 });
+      }
+      for (let x = 3270; x < 4420; x += 210) {
+        centerMarks.push({ x, y: 1.2, z: 3410, w: 78, h: 0.1, d: 8 });
+      }
+      this.addInstancedGroundPlaneBatch(centerMarks, materials.lanePaint, { name: 'road-center-markings' });
+
+      const crosswalks = [];
+      this.addCrosswalkStripes(crosswalks, 2500, 2292, false);
+      this.addCrosswalkStripes(crosswalks, 2500, 2748, false);
+      this.addCrosswalkStripes(crosswalks, 2272, 2520, true);
+      this.addCrosswalkStripes(crosswalks, 2728, 2520, true);
+      this.addCrosswalkStripes(crosswalks, 2300, 820, true);
+      this.addCrosswalkStripes(crosswalks, 3180, 3410, true);
+      this.addInstancedGroundPlaneBatch(crosswalks, materials.crosswalk, { name: 'crosswalk-stripes' });
+    }
+
+    addCrosswalkStripes(entries, x, z, horizontal) {
+      for (let i = -4; i <= 4; i += 1) {
+        if (horizontal) {
+          entries.push({ x: x + i * 17, y: 1.32, z, w: 9, h: 0.12, d: 96 });
+        } else {
+          entries.push({ x, y: 1.32, z: z + i * 17, w: 96, h: 0.12, d: 9 });
+        }
+      }
+    }
+
+    addSidewalkAndCurbDetails(materials) {
+      const sidewalks = [
+        { x: 2310, y: 0.64, z: 2500, w: 72, h: 1.2, d: 5000 },
+        { x: 2690, y: 0.64, z: 2500, w: 72, h: 1.2, d: 5000 },
+        { x: 2500, y: 0.66, z: 2350, w: 5000, h: 1.2, d: 68 },
+        { x: 2500, y: 0.66, z: 2690, w: 5000, h: 1.2, d: 68 },
+        { x: 1560, y: 0.66, z: 700, w: 1570, h: 1.2, d: 58 },
+        { x: 1560, y: 0.66, z: 940, w: 1570, h: 1.2, d: 58 },
+        { x: 3840, y: 0.66, z: 3290, w: 1370, h: 1.2, d: 58 },
+        { x: 3840, y: 0.66, z: 3530, w: 1370, h: 1.2, d: 58 }
+      ];
+      this.addInstancedBoxBatch(sidewalks, materials.sidewalk, { name: 'sidewalk-slabs', receiveShadow: true });
+
+      const curbs = [
+        { x: 2412, y: 3.2, z: 2500, w: 9, h: 6, d: 5000 },
+        { x: 2588, y: 3.2, z: 2500, w: 9, h: 6, d: 5000 },
+        { x: 2500, y: 3.2, z: 2432, w: 5000, h: 6, d: 9 },
+        { x: 2500, y: 3.2, z: 2608, w: 5000, h: 6, d: 9 },
+        { x: 1560, y: 3.2, z: 752, w: 1500, h: 6, d: 8 },
+        { x: 1560, y: 3.2, z: 888, w: 1500, h: 6, d: 8 },
+        { x: 3180, y: 3.2, z: 3342, w: 1320, h: 6, d: 8 },
+        { x: 3180, y: 3.2, z: 3478, w: 1320, h: 6, d: 8 }
+      ];
+      this.addInstancedBoxBatch(curbs, materials.curb, { name: 'street-curbs', receiveShadow: true });
+    }
+
+    addBuildingVisualDetails(materials) {
+      const trim = [];
+      const awnings = [];
+      const vents = [];
+      const roofUnits = [];
+
+      for (const building of this.objects) {
+        if (building.type !== 'building' || !building.detailed) continue;
+        const floors = building.floors || 2;
+        const topY = floors * 112 + 12;
+        const cx = building.x + building.w / 2;
+        const cz = building.y + building.h / 2;
+
+        trim.push({ x: cx, y: 18, z: building.y - 1.6, w: building.w + 18, h: 9, d: 5 });
+        trim.push({ x: cx, y: topY - 24, z: building.y - 1.8, w: building.w + 18, h: 10, d: 5 });
+        trim.push({ x: building.x - 1.6, y: topY - 24, z: cz, w: 5, h: 10, d: building.h + 14 });
+        trim.push({ x: building.x + building.w + 1.6, y: topY - 24, z: cz, w: 5, h: 10, d: building.h + 14 });
+
+        awnings.push({ x: cx, y: 78, z: building.y + building.h + 8, w: Math.min(132, building.w * 0.34), h: 8, d: 34 });
+        if (building.floors > 2) {
+          awnings.push({ x: building.x + building.w * 0.26, y: 188, z: building.y - 7, w: 84, h: 7, d: 24 });
+        }
+
+        vents.push({ x: building.x + building.w * 0.28, y: topY + 10, z: building.y + building.h * 0.34, w: 52, h: 20, d: 32 });
+        vents.push({ x: building.x + building.w * 0.68, y: topY + 8, z: building.y + building.h * 0.62, w: 34, h: 16, d: 48 });
+        roofUnits.push({ x: building.x + building.w * 0.52, y: topY + 20, z: building.y + building.h * 0.26, w: 88, h: 38, d: 62 });
+      }
+
+      this.addInstancedBoxBatch(trim, materials.facadeTrim, { name: 'building-facade-trim', castShadow: false, receiveShadow: true });
+      this.addInstancedBoxBatch(awnings, materials.awning, { name: 'building-awnings', castShadow: true, receiveShadow: true });
+      this.addInstancedBoxBatch(vents, materials.roofMetal, { name: 'roof-vents', castShadow: false, receiveShadow: true });
+      this.addInstancedBoxBatch(roofUnits, materials.roofMetal, { name: 'roof-mechanical-units', castShadow: true, receiveShadow: true });
+    }
+
+    addVegetationDetailClusters(materials) {
+      const grass = [];
+      const shrubs = [];
+      const clusters = [
+        [420, 2100, 14], [830, 2260, 12], [3880, 980, 14], [4400, 1120, 12],
+        [3220, 4320, 16], [3650, 4380, 16], [1940, 3580, 12], [2160, 3720, 12],
+        [620, 4500, 10], [4380, 4040, 10]
+      ];
+
+      for (const cluster of clusters) {
+        const cx = cluster[0];
+        const cz = cluster[1];
+        const count = cluster[2];
+        for (let i = 0; i < count; i += 1) {
+          const angle = i * 2.399;
+          const distance = randomRange(22, 118);
+          const x = cx + Math.cos(angle) * distance;
+          const z = cz + Math.sin(angle) * distance;
+          grass.push({ x, y: 7, z, w: randomRange(5, 10), h: randomRange(11, 22), d: randomRange(5, 10), rotY: angle });
+        }
+        shrubs.push({ x: cx + randomRange(-70, 70), y: 15, z: cz + randomRange(-70, 70), w: randomRange(34, 56), h: randomRange(22, 34), d: randomRange(30, 52), rotY: randomRange(0, Math.PI) });
+      }
+
+      this.addInstancedBoxBatch(grass, materials.grass, { name: 'grass-tufts', castShadow: false, receiveShadow: true });
+      this.addInstancedBoxBatch(shrubs, materials.shrub, { name: 'low-shrub-clumps', castShadow: false, receiveShadow: true });
+    }
+
+    addSmallUrbanDetails(materials) {
+      const trash = [];
+      const concrete = [];
+      const bollards = [];
+
+      const litterZones = [
+        [1060, 1180], [1690, 1320], [3260, 2920], [3900, 3400],
+        [2320, 2380], [2680, 2650], [820, 880], [4320, 2180]
+      ];
+      for (const zone of litterZones) {
+        for (let i = 0; i < 8; i += 1) {
+          trash.push({
+            x: zone[0] + randomRange(-85, 85),
+            y: 2.4,
+            z: zone[1] + randomRange(-85, 85),
+            w: randomRange(8, 22),
+            h: randomRange(1.5, 4),
+            d: randomRange(5, 16),
+            rotY: randomRange(0, Math.PI)
+          });
+        }
+      }
+
+      const workSites = [
+        [2040, 2260], [2840, 2700], [3120, 1800], [1450, 2220]
+      ];
+      for (const site of workSites) {
+        concrete.push({ x: site[0], y: 15, z: site[1], w: 68, h: 30, d: 32, rotY: 0.25 });
+        concrete.push({ x: site[0] + 58, y: 12, z: site[1] + 42, w: 44, h: 24, d: 28, rotY: -0.35 });
+        concrete.push({ x: site[0] - 52, y: 11, z: site[1] - 30, w: 38, h: 22, d: 34, rotY: 0.7 });
+      }
+
+      for (let z = 2340; z <= 2680; z += 44) {
+        bollards.push({ x: 2360, y: 13, z, w: 12, h: 26, d: 12 });
+        bollards.push({ x: 2640, y: 13, z, w: 12, h: 26, d: 12 });
+      }
+
+      this.addInstancedBoxBatch(trash, materials.trash, { name: 'street-litter', castShadow: false, receiveShadow: true });
+      this.addInstancedBoxBatch(concrete, materials.concrete, { name: 'visual-concrete-blocks', castShadow: true, receiveShadow: true });
+      this.addInstancedBoxBatch(bollards, materials.facadeTrim, { name: 'intersection-bollards', castShadow: false, receiveShadow: true });
+    }
+
+    addInstancedBoxBatch(entries, material, options) {
+      if (!entries.length) return null;
+      const mesh = new THREE.InstancedMesh(this.decorBoxGeometry, material, entries.length);
+      mesh.name = options && options.name ? options.name : 'visual-detail-batch';
+      mesh.castShadow = options && options.castShadow !== undefined ? options.castShadow : false;
+      mesh.receiveShadow = options && options.receiveShadow !== undefined ? options.receiveShadow : true;
+      mesh.frustumCulled = true;
+      mesh.matrixAutoUpdate = false;
+      mesh.userData.visualDetail = true;
+
+      for (let i = 0; i < entries.length; i += 1) {
+        const entry = entries[i];
+        this.decorBatchPosition.set(entry.x, entry.y, entry.z);
+        this.decorBatchQuaternion.setFromAxisAngle(WORLD_UP, entry.rotY || 0);
+        this.decorBatchScale.set(entry.w, entry.h, entry.d);
+        this.decorBatchMatrix.compose(this.decorBatchPosition, this.decorBatchQuaternion, this.decorBatchScale);
+        mesh.setMatrixAt(i, this.decorBatchMatrix);
+      }
+
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.computeBoundingSphere) mesh.computeBoundingSphere();
+      this.group.add(mesh);
+      return mesh;
+    }
+
+    addInstancedGroundPlaneBatch(entries, material, options) {
+      if (!entries.length) return null;
+      const mesh = new THREE.InstancedMesh(this.decorPlaneGeometry, material, entries.length);
+      mesh.name = options && options.name ? options.name : 'visual-ground-detail-batch';
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      mesh.frustumCulled = true;
+      mesh.matrixAutoUpdate = false;
+      mesh.userData.visualDetail = true;
+
+      for (let i = 0; i < entries.length; i += 1) {
+        const entry = entries[i];
+        this.decorBatchPosition.set(entry.x, entry.y, entry.z);
+        this.decorBatchEuler.set(-Math.PI / 2, 0, entry.rotY || 0);
+        this.decorBatchQuaternion.setFromEuler(this.decorBatchEuler);
+        this.decorBatchScale.set(entry.w, entry.d, 1);
+        this.decorBatchMatrix.compose(this.decorBatchPosition, this.decorBatchQuaternion, this.decorBatchScale);
+        mesh.setMatrixAt(i, this.decorBatchMatrix);
+      }
+
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.computeBoundingSphere) mesh.computeBoundingSphere();
+      this.group.add(mesh);
+      return mesh;
     }
 
     buildSpatialIndex() {
@@ -925,7 +1237,7 @@
       const wallColor = object.color || 0x777f88;
       const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x4f5962, roughness: 0.88 });
       const ceilingMaterial = new THREE.MeshStandardMaterial({ color: 0x505b64, roughness: 0.9 });
-      const roofMaterial = new THREE.MeshStandardMaterial({ color: 0x303944, roughness: 0.82 });
+      const roofMaterial = new THREE.MeshStandardMaterial({ color: 0x303944, map: this.textures.roof, roughness: 0.84 });
       const stairOpening = this.getBuildingStairOpening(object);
 
       for (let floor = 0; floor < floors; floor += 1) {
@@ -1281,6 +1593,7 @@
     registerRenderOptimizations() {
       this.renderOptimizedMeshes.length = 0;
       const tempBox = new THREE.Box3();
+      const tempCenter = new THREE.Vector3();
 
       this.group.traverse((child) => {
         if (!child.isMesh && !child.isInstancedMesh) return;
@@ -1290,7 +1603,16 @@
           child.geometry.computeBoundingSphere();
         }
 
+        if (child.isInstancedMesh && child.computeBoundingSphere && !child.boundingSphere) {
+          child.computeBoundingSphere();
+        }
+
+        let center = null;
         let radius = child.geometry && child.geometry.boundingSphere ? child.geometry.boundingSphere.radius : 64;
+        if (child.isInstancedMesh && child.boundingSphere) {
+          radius = child.boundingSphere.radius;
+          center = tempCenter.copy(child.boundingSphere.center).applyMatrix4(child.matrixWorld).clone();
+        }
         radius *= Math.max(child.scale.x || 1, child.scale.y || 1, child.scale.z || 1);
 
         if (!Number.isFinite(radius) || radius <= 0) {
@@ -1305,6 +1627,7 @@
 
         this.renderOptimizedMeshes.push({
           mesh: child,
+          center,
           radius,
           baseCastShadow: child.castShadow,
           baseReceiveShadow: child.receiveShadow,
@@ -1360,6 +1683,7 @@
         });
 
         instanced.instanceMatrix.needsUpdate = true;
+        if (instanced.computeBoundingSphere) instanced.computeBoundingSphere();
         this.group.add(instanced);
       }
     }
@@ -1442,7 +1766,11 @@
         if (!mesh.parent) continue;
         if (!mesh.visible && !mesh.userData.optimizedHidden) continue;
 
-        mesh.getWorldPosition(this.renderTempPosition);
+        if (entry.center) {
+          this.renderTempPosition.copy(entry.center);
+        } else {
+          mesh.getWorldPosition(this.renderTempPosition);
+        }
         const dx = this.renderTempPosition.x - focusX;
         const dz = this.renderTempPosition.z - focusZ;
         const distance = Math.hypot(dx, dz);
@@ -1656,12 +1984,12 @@
       const bodyMaterial = new THREE.MeshStandardMaterial({ color: 0x8b4351, roughness: 0.78, metalness: 0.04 });
       const limbMaterial = new THREE.MeshStandardMaterial({ color: 0x2e3944, roughness: 0.82, metalness: 0.06 });
       const parts = [
-        new THREE.Mesh(new THREE.BoxGeometry(26, 34, 14), bodyMaterial),
-        new THREE.Mesh(new THREE.BoxGeometry(20, 20, 20), bodyMaterial),
-        new THREE.Mesh(new THREE.BoxGeometry(9, 28, 9), limbMaterial),
-        new THREE.Mesh(new THREE.BoxGeometry(9, 28, 9), limbMaterial),
-        new THREE.Mesh(new THREE.BoxGeometry(10, 32, 10), limbMaterial),
-        new THREE.Mesh(new THREE.BoxGeometry(10, 32, 10), limbMaterial)
+        new THREE.Mesh(this.ragdollGeometries[0], bodyMaterial),
+        new THREE.Mesh(this.ragdollGeometries[1], bodyMaterial),
+        new THREE.Mesh(this.ragdollGeometries[2], limbMaterial),
+        new THREE.Mesh(this.ragdollGeometries[3], limbMaterial),
+        new THREE.Mesh(this.ragdollGeometries[4], limbMaterial),
+        new THREE.Mesh(this.ragdollGeometries[5], limbMaterial)
       ];
       const offsets = [
         [0, 36, 0],
@@ -1752,9 +2080,13 @@
 
         if (ragdoll.life <= 0) {
           this.group.remove(ragdoll.group);
+          const disposedMaterials = new Set();
           ragdoll.group.traverse((child) => {
-            if (child.geometry) child.geometry.dispose();
-            if (child.material) child.material.dispose();
+            if (child.geometry && !child.geometry.userData.sharedRagdollResource) child.geometry.dispose();
+            if (child.material && !disposedMaterials.has(child.material)) {
+              disposedMaterials.add(child.material);
+              child.material.dispose();
+            }
           });
           this.ragdolls.splice(i, 1);
         }

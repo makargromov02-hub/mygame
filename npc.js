@@ -17,6 +17,9 @@
   const COVER_HIDE_TIME = 950;
   const FAR_AI_DISTANCE = NPC.visionRange * 1.45;
   const FAR_AI_INTERVAL = 650;
+  const COVER_SCAN_RADIUS = NPC.visionRange * 1.05;
+  const COVER_CACHE_INTERVAL = 720;
+  const COMBAT_SLOT_RADIUS = NPC.radius * 4.4;
   const ROLE_SEQUENCE = ['assault', 'rifleman', 'sniper', 'heavy', 'commander'];
   const NPC_ROLES = {
     assault: {
@@ -158,6 +161,7 @@
       this.lastPlayerShotX = player.x;
       this.lastPlayerShotZ = player.z;
       this.lastPlayerShotAt = 0;
+      this.lastShotAlertAt = 0;
       this.tempShotOrigin = new THREE.Vector3();
       this.tempShotTarget = new THREE.Vector3();
       this.tempShotDirection = new THREE.Vector3();
@@ -223,6 +227,32 @@
       npc.bulletSpread = (settings.bulletSpread || this.stats.bulletSpread) * (role.spread || 1);
       npc.magazineSize = Math.max(1, Math.round(MAGAZINE_SIZE * (role.magazine || 1)));
       npc.reloadTime = RELOAD_TIME * (role.reload || 1);
+      npc.visionRange = (settings.visionRange || this.stats.visionRange || NPC.visionRange) * (role.vision || 1) * (npc.personality ? npc.personality.perception : 1);
+      npc.reactionDelay = (npc.personality ? npc.personality.reactionDelay : 260) * (settings.reactionMultiplier || this.stats.reactionMultiplier || 1);
+      npc.accuracyBias = npc.personality ? npc.personality.accuracy : 1;
+      npc.aggression = npc.personality ? npc.personality.aggression : 1;
+      npc.caution = npc.personality ? npc.personality.caution : 1;
+    }
+
+    createPersonality(id) {
+      const seed = (id * 9301 + 49297) % 233280;
+      const n = (offset) => {
+        const value = Math.sin(seed + offset * 12.9898) * 43758.5453;
+        return value - Math.floor(value);
+      };
+
+      return {
+        reactionDelay: 150 + n(1) * 360,
+        accuracy: 0.86 + n(2) * 0.32,
+        aggression: 0.72 + n(3) * 0.62,
+        caution: 0.74 + n(4) * 0.56,
+        perception: 0.92 + n(5) * 0.18,
+        teamwork: 0.72 + n(6) * 0.5,
+        flankPreference: n(7) < 0.5 ? -1 : 1,
+        burstDiscipline: 0.82 + n(8) * 0.36,
+        aimWaver: 0.75 + n(9) * 0.55,
+        searchPatience: 0.82 + n(10) * 0.45
+      };
     }
 
     createGrenadePool() {
@@ -277,6 +307,7 @@
         state: 'patrol',
         roleKey: this.getRoleKey(id),
         role: NPC_ROLES[this.getRoleKey(id)],
+        personality: this.createPersonality(id),
         targetX: point.x,
         targetZ: point.z,
         lastKnownPlayerX: point.x,
@@ -301,6 +332,8 @@
         aimKick: 0,
         lastCombatActionAt: 0,
         lastShotAt: 0,
+        playerSpottedAt: 0,
+        readyToFireAt: 0,
         nextFarThinkAt: 0,
         nextVisionAt: 0,
         nextDoorCheckAt: 0,
@@ -320,6 +353,9 @@
         cautiousUntil: 0,
         dodgeUntil: 0,
         grenadeCooldownUntil: performance.now() + randomRange(3500, 8000),
+        coverCacheAt: 0,
+        coverCandidates: null,
+        lastDecisionAt: 0,
         maxHealth: this.stats.maxHealth,
         speed: this.stats.speed,
         bulletSpread: this.stats.bulletSpread,
@@ -371,6 +407,8 @@
       npc.aimKick = 0;
       npc.lastCombatActionAt = now;
       npc.lastShotAt = 0;
+      npc.playerSpottedAt = 0;
+      npc.readyToFireAt = 0;
       npc.nextFarThinkAt = now + randomRange(0, FAR_AI_INTERVAL);
       npc.nextVisionAt = now + randomRange(0, 120);
       npc.nextDoorCheckAt = now + randomRange(0, 260);
@@ -395,6 +433,9 @@
       npc.dodgeUntil = 0;
       npc.grenadeCooldownUntil = now + randomRange(3500, 8000);
       npc.alertedByAllyUntil = 0;
+      npc.coverCacheAt = 0;
+      npc.coverCandidates = null;
+      npc.lastDecisionAt = now;
       npc.hurtPart = 'torso';
       npc.hurtStrength = 1;
       npc.hurtPoseSign = 1;
@@ -409,12 +450,15 @@
       this.stats = {
         maxHealth: options.maxHealth || NPC.maxHealth,
         speed: options.speed || NPC.speed,
-        bulletSpread: options.bulletSpread || NPC.bulletSpread
+        bulletSpread: options.bulletSpread || NPC.bulletSpread,
+        visionRange: options.visionRange || NPC.visionRange,
+        reactionMultiplier: options.reactionMultiplier || 1
       };
     }
 
     spawnWave(count, stats) {
       this.configureForMode(Object.assign({ respawnEnabled: false }, stats || {}));
+      const roleKeys = stats && stats.roleKeys ? stats.roleKeys : null;
 
       while (this.npcs.length < count) {
         this.npcs.push(this.createNpc(this.npcs.length));
@@ -423,6 +467,7 @@
       for (let i = 0; i < this.npcs.length; i += 1) {
         const npc = this.npcs[i];
         if (i < count) {
+          if (roleKeys && roleKeys[i]) npc.roleKey = roleKeys[i];
           this.resetNpc(npc);
         } else {
           npc.alive = false;
@@ -649,9 +694,10 @@
         }
 
         this.setNpcLowDetail(npc, false);
+        const hadVision = Boolean(npc.seesPlayer);
         npc.seesPlayer = this.updateNpcVision(npc, distanceToPlayer, now);
         if (npc.seesPlayer) {
-          this.markPlayerDetected(npc, now);
+          this.markPlayerDetected(npc, now, hadVision);
           this.alertNearbyNpcs(npc, now);
           if (this.baseSystem) {
             this.baseSystem.handleNpcDetected(npc, now);
@@ -721,6 +767,7 @@
       if (now < this.squadThinkAt) return;
       this.squadThinkAt = now + 460;
       this.updatePlayerShotMemory(now);
+      this.alertNpcsByGunfire(now);
       this.updateSuppression(now);
 
       let commander = null;
@@ -782,6 +829,34 @@
       }
     }
 
+    alertNpcsByGunfire(now) {
+      if (!this.lastPlayerShotAt || now - this.lastPlayerShotAt > 650) return;
+      if (now - (this.lastShotAlertAt || 0) < 520) return;
+      this.lastShotAlertAt = now;
+
+      for (const npc of this.npcs) {
+        if (!npc.alive || npc.seesPlayer) continue;
+        const dx = npc.x - this.lastPlayerShotX;
+        const dz = npc.z - this.lastPlayerShotZ;
+        const distance = Math.hypot(dx, dz);
+        const hearingRadius = NPC.visionRange * (0.55 + ((npc.personality && npc.personality.perception) || 1) * 0.28);
+        if (distance > hearingRadius) continue;
+
+        npc.lastShotX = this.lastPlayerShotX;
+        npc.lastShotZ = this.lastPlayerShotZ;
+        npc.lastShotMemoryAt = now;
+        npc.lastKnownPlayerX = this.lastPlayerShotX;
+        npc.lastKnownPlayerZ = this.lastPlayerShotZ;
+        npc.searchUntil = Math.max(npc.searchUntil || 0, now + NPC.searchTime * ((npc.personality && npc.personality.searchPatience) || 1));
+        npc.alertedByAllyUntil = now + NPC.searchTime * 0.55;
+        npc.searchArrivedAt = 0;
+        npc.searchPattern = SEARCH_PATTERNS[(npc.id + Math.floor(now / 500)) % SEARCH_PATTERNS.length];
+        npc.state = 'search';
+        npc.searchTargetUntil = 0;
+        npc.nextVisionAt = Math.min(npc.nextVisionAt || now, now + randomRange(90, 180));
+      }
+    }
+
     updateSuppression(now) {
       const playerIsSuppressing = this.playerShootingSince && now - this.playerShootingSince > 950;
       if (!playerIsSuppressing) return;
@@ -803,7 +878,11 @@
       for (const npc of this.npcs) {
         if (!npc.alive) continue;
         if (npc.seesPlayer) {
-          npc.tacticalOrder = npc.roleKey === 'heavy' ? 'suppress' : (Math.random() < 0.5 ? 'hold' : 'flankLeft');
+          const preference = (npc.personality && npc.personality.flankPreference) || 1;
+          const aggression = (npc.personality && npc.personality.aggression) || 1;
+          npc.tacticalOrder = npc.roleKey === 'heavy' ? 'suppress'
+            : npc.roleKey === 'sniper' ? 'hold'
+              : Math.random() < 0.38 / aggression ? 'hold' : (preference < 0 ? 'flankLeft' : 'flankRight');
         } else if (now < (npc.searchUntil || 0)) {
           npc.searchPattern = SEARCH_PATTERNS[(npc.id + index) % SEARCH_PATTERNS.length];
           npc.tacticalOrder = 'sweep';
@@ -818,7 +897,7 @@
         npc.lastKnownPlayerZ = this.player.z;
         npc.lastKnownPlayerDx = this.lastPlayerMoveX;
         npc.lastKnownPlayerDz = this.lastPlayerMoveZ;
-        npc.searchUntil = now + NPC.searchTime;
+        npc.searchUntil = now + NPC.searchTime * ((npc.personality && npc.personality.searchPatience) || 1);
         npc.searchArrivedAt = 0;
 
         if (this.shouldSeekCover(npc, now)) {
@@ -845,16 +924,16 @@
     }
 
     canSeePlayer(npc, distanceToPlayer) {
-      if (distanceToPlayer > NPC.visionRange) return false;
-      if (!this.world.hasLineOfSight(npc.x, npc.z, this.player.x, this.player.z)) return false;
+      const visionRange = npc.visionRange || NPC.visionRange;
+      if (distanceToPlayer > visionRange) return false;
 
-      if (distanceToPlayer <= AWARENESS_RADIUS) {
-        return true;
+      if (distanceToPlayer > AWARENESS_RADIUS) {
+        const toPlayer = angleToTarget(npc.x, npc.z, this.player.x, this.player.z);
+        const difference = Math.abs(this.angleDifference(toPlayer, npc.angle));
+        if (difference > VISION_ANGLE / 2) return false;
       }
 
-      const toPlayer = angleToTarget(npc.x, npc.z, this.player.x, this.player.z);
-      const difference = Math.abs(this.angleDifference(toPlayer, npc.angle));
-      if (difference > VISION_ANGLE / 2) return false;
+      if (!this.world.hasLineOfSight(npc.x, npc.z, this.player.x, this.player.z)) return false;
 
       return true;
     }
@@ -865,11 +944,17 @@
       }
 
       const seesPlayer = this.canSeePlayer(npc, distanceToPlayer);
-      npc.nextVisionAt = now + (seesPlayer ? 85 : 150) + randomRange(0, 65);
+      const personality = npc.personality || {};
+      const baseInterval = seesPlayer ? 90 : 165;
+      npc.nextVisionAt = now + baseInterval * (1.06 - Math.min(0.22, (personality.perception || 1) - 0.92)) + randomRange(0, 75);
       return seesPlayer;
     }
 
-    markPlayerDetected(npc, now) {
+    markPlayerDetected(npc, now, hadVision) {
+      if (!hadVision || !npc.playerSpottedAt) {
+        npc.playerSpottedAt = now;
+        npc.readyToFireAt = now + (npc.reactionDelay || 260) + randomRange(40, 190);
+      }
       npc.lastKnownPlayerX = this.player.x;
       npc.lastKnownPlayerZ = this.player.z;
       npc.lastKnownPlayerDx = this.lastPlayerMoveX;
@@ -877,14 +962,14 @@
       npc.lastShotX = this.lastPlayerShotX;
       npc.lastShotZ = this.lastPlayerShotZ;
       npc.lastShotMemoryAt = this.lastPlayerShotAt;
-      npc.searchUntil = now + NPC.searchTime;
+      npc.searchUntil = now + NPC.searchTime * ((npc.personality && npc.personality.searchPatience) || 1);
       npc.searchArrivedAt = 0;
       npc.nextVisionAt = now + 80;
       npc.patrolPauseUntil = 0;
       npc.state = npc.state === 'cover' ? npc.state : 'chase';
       npc.isPeeking = true;
       npc.coverHideUntil = 0;
-      npc.nextBurstAt = Math.min(npc.nextBurstAt || now, now + randomRange(120, 360));
+      npc.nextBurstAt = Math.min(npc.nextBurstAt || now, now + randomRange(160, 420));
       if (npc.roleKey === 'sniper' && (!npc.aimReadyAt || now > npc.aimReadyAt + 1800)) {
         npc.aimReadyAt = now + randomRange(650, 1150);
       }
@@ -980,8 +1065,11 @@
 
     updateCombat(npc, distanceToPlayer, dt, now) {
       const role = npc.role || NPC_ROLES.rifleman;
-      const desiredDistance = role.desiredDistance || NPC.stopDistance;
-      const minDistance = role.minDistance || NPC.stopDistance * 0.62;
+      const personality = npc.personality || {};
+      const aggression = personality.aggression || 1;
+      const caution = personality.caution || 1;
+      const desiredDistance = (role.desiredDistance || NPC.stopDistance) * (1.08 - Math.min(0.24, (aggression - 0.72) * 0.28)) * (0.96 + (caution - 0.74) * 0.16);
+      const minDistance = (role.minDistance || NPC.stopDistance * 0.62) * (0.94 + (caution - 0.74) * 0.18);
       const playerAngle = angleToTarget(npc.x, npc.z, this.player.x, this.player.z);
       npc.angle = this.turnToward(npc.angle, playerAngle, dt * 6);
       npc.changeDirectionIn = randomRange(NPC.turnEveryMin, NPC.turnEveryMax);
@@ -997,7 +1085,13 @@
         this.updateCoverCombat(npc, distanceToPlayer, dt, now);
       } else if (distanceToPlayer > desiredDistance + 38 && npc.roleKey !== 'sniper') {
         npc.state = 'chase';
-        npc.isMoving = this.moveTowardPoint(npc, this.player.x, this.player.z, dt);
+        const lead = aggression > 1.08 ? 38 : 18;
+        npc.isMoving = this.moveTowardPoint(
+          npc,
+          this.player.x + (this.lastPlayerMoveX || 0) * lead,
+          this.player.z + (this.lastPlayerMoveZ || 0) * lead,
+          dt
+        );
       } else if (distanceToPlayer < minDistance) {
         npc.state = 'fallback';
         npc.isMoving = this.moveAwayFromPoint(npc, this.player.x, this.player.z, dt);
@@ -1010,7 +1104,7 @@
         npc.isMoving = npc.roleKey === 'sniper' ? false : this.strafeAroundPlayer(npc, dt * 0.35, now);
       } else {
         npc.state = 'attack';
-        npc.isMoving = this.strafeAroundPlayer(npc, dt * (role.strafe || 1), now);
+        npc.isMoving = this.strafeAroundPlayer(npc, dt * (role.strafe || 1) * (0.86 + aggression * 0.16), now);
       }
 
       if (npc.isMoving) {
@@ -1086,8 +1180,10 @@
       const recentShot = npc.lastShotMemoryAt && now - npc.lastShotMemoryAt < NPC.searchTime;
       const memoryX = recentShot && pattern === 'forward' ? npc.lastShotX : npc.lastKnownPlayerX;
       const memoryZ = recentShot && pattern === 'forward' ? npc.lastShotZ : npc.lastKnownPlayerZ;
-      const forward = pattern === 'forward' ? 145 : pattern === 'cover' ? -55 : 55;
-      const lateral = side * randomRange(120, 230);
+      const personality = npc.personality || {};
+      const patience = personality.searchPatience || 1;
+      const forward = (pattern === 'forward' ? 145 : pattern === 'cover' ? -55 : 55) * patience;
+      const lateral = side * randomRange(110, 245) * (0.88 + ((personality.teamwork || 1) * 0.18));
       const forwardAngle = baseAngle;
       const lateralAngle = baseAngle + Math.PI / 2;
       const predictX = (npc.lastKnownPlayerDx || 0) * (pattern === 'forward' ? 135 : 60);
@@ -1105,7 +1201,7 @@
         npc.targetX = npc.lastKnownPlayerX;
         npc.targetZ = npc.lastKnownPlayerZ;
       }
-      npc.searchTargetUntil = now + randomRange(900, 1750);
+      npc.searchTargetUntil = now + randomRange(900, 1750) * patience;
     }
 
     updateWander(npc, dt, now) {
@@ -1308,27 +1404,60 @@
     assignReposition(npc, now) {
       const role = npc.role || NPC_ROLES.rifleman;
       const flank = npc.tacticalOrder === 'flankLeft' ? -0.95 : npc.tacticalOrder === 'flankRight' ? 0.95 : 0;
-      const angle = angleToTarget(this.player.x, this.player.z, npc.x, npc.z) + flank + randomRange(-0.85, 0.85);
-      const distance = randomRange((role.desiredDistance || NPC.stopDistance) * 0.82, (role.desiredDistance || NPC.stopDistance) * 1.32);
-      const targetX = clamp(this.player.x + Math.sin(angle) * distance, NPC.radius, window.GameConfig.WORLD.width - NPC.radius);
-      const targetZ = clamp(this.player.z + Math.cos(angle) * distance, NPC.radius, window.GameConfig.WORLD.height - NPC.radius);
+      const personality = npc.personality || {};
+      const personalFlank = (personality.flankPreference || 1) * 0.28;
+      const baseAngle = angleToTarget(this.player.x, this.player.z, npc.x, npc.z) + flank + personalFlank;
+      const desired = role.desiredDistance || NPC.stopDistance;
+      let best = null;
+      let bestScore = Infinity;
 
-      if (this.canMoveTo(targetX, targetZ)) {
-        npc.targetX = targetX;
-        npc.targetZ = targetZ;
+      for (let i = 0; i < 5; i += 1) {
+        const angle = baseAngle + randomRange(-0.9, 0.9);
+        const distance = randomRange(desired * 0.78, desired * (1.18 + ((personality.aggression || 1) < 0.9 ? 0.22 : 0)));
+        const targetX = clamp(this.player.x + Math.sin(angle) * distance, NPC.radius, window.GameConfig.WORLD.width - NPC.radius);
+        const targetZ = clamp(this.player.z + Math.cos(angle) * distance, NPC.radius, window.GameConfig.WORLD.height - NPC.radius);
+        if (!this.canMoveTo(targetX, targetZ)) continue;
+
+        const crowdPenalty = this.getCrowdPenalty(targetX, targetZ, npc);
+        const travel = Math.hypot(targetX - npc.x, targetZ - npc.z);
+        const distanceToPlayer = Math.hypot(targetX - this.player.x, targetZ - this.player.z);
+        const score = travel * 0.42 + Math.abs(distanceToPlayer - desired) * 0.58 + crowdPenalty;
+        if (score < bestScore) {
+          best = { x: targetX, z: targetZ };
+          bestScore = score;
+        }
       }
 
-      npc.nextRepositionAt = now + randomRange(role.repositionMin || NPC.repositionMin, role.repositionMax || NPC.repositionMax);
-      if (npc.roleKey === 'assault' && Math.random() < 0.35) {
+      if (best) {
+        npc.targetX = best.x;
+        npc.targetZ = best.z;
+      }
+
+      npc.nextRepositionAt = now + randomRange(role.repositionMin || NPC.repositionMin, role.repositionMax || NPC.repositionMax) * (1.18 - Math.min(0.42, (personality.aggression || 1) * 0.28));
+      if (npc.roleKey === 'assault' && Math.random() < 0.35 * ((personality.aggression || 1))) {
         npc.dodgeUntil = now + 420;
       }
+    }
+
+    getCrowdPenalty(x, z, self) {
+      let penalty = 0;
+      for (const ally of this.npcs) {
+        if (!ally.alive || ally === self) continue;
+        const allyX = ally.targetX !== undefined ? ally.targetX : ally.x;
+        const allyZ = ally.targetZ !== undefined ? ally.targetZ : ally.z;
+        const distance = Math.hypot(allyX - x, allyZ - z);
+        if (distance > COMBAT_SLOT_RADIUS) continue;
+        penalty += (COMBAT_SLOT_RADIUS - distance) * 3.2;
+      }
+      return penalty;
     }
 
     assignSniperPosition(npc, now) {
       let best = null;
       let bestScore = Infinity;
 
-      for (const object of this.world.objects) {
+      const candidates = this.getNearbyTacticalObjects(npc, now, COVER_SCAN_RADIUS * 1.2);
+      for (const object of candidates) {
         if (!object || object.destroyed || object.solid === false) continue;
         const center = this.getObjectCenter(object);
         const awayX = center.x - this.player.x;
@@ -1364,7 +1493,8 @@
       let best = null;
       let bestScore = Infinity;
 
-      for (const object of this.world.objects) {
+      const candidates = this.getNearbyTacticalObjects(npc, performance.now(), COVER_SCAN_RADIUS);
+      for (const object of candidates) {
         if (object.destroyed || object.solid === false) continue;
 
         const center = this.getObjectCenter(object);
@@ -1394,6 +1524,33 @@
       return best;
     }
 
+    getNearbyTacticalObjects(npc, now, radius) {
+      if (npc.coverCandidates && now - (npc.coverCacheAt || 0) < COVER_CACHE_INTERVAL) {
+        return npc.coverCandidates;
+      }
+
+      const candidates = [];
+      const queryId = now + npc.id * 0.001;
+      const addObjects = (objects) => {
+        for (const object of objects) {
+          if (!object || object._npcTacticalQueryId === queryId) continue;
+          object._npcTacticalQueryId = queryId;
+          candidates.push(object);
+        }
+      };
+
+      if (this.world.getSpatialCandidates) {
+        addObjects(this.world.getSpatialCandidates(npc.x, npc.z, radius));
+        addObjects(this.world.getSpatialCandidates(this.player.x, this.player.z, radius * 0.72));
+      } else {
+        addObjects(this.world.objects || []);
+      }
+
+      npc.coverCandidates = candidates;
+      npc.coverCacheAt = now;
+      return candidates;
+    }
+
     getObjectCenter(object) {
       if (object.shape === 'rect') {
         return { x: object.x + object.w / 2, z: object.y + object.h / 2 };
@@ -1412,6 +1569,10 @@
 
     shoot(npc, now, distanceToPlayer) {
       if (now < npc.nextShotAt) return;
+      if (now < (npc.readyToFireAt || 0)) {
+        npc.lastCombatActionAt = now;
+        return;
+      }
       if (npc.reloadUntil && now < npc.reloadUntil) return;
       if (npc.roleKey === 'sniper' && now < (npc.aimReadyAt || 0)) {
         npc.isShooting = false;
@@ -1449,7 +1610,12 @@
           }
         }
         const role = npc.role || NPC_ROLES.rifleman;
-        npc.burstShotsRemaining = Math.floor(randomRange(role.burstMin || BURST_MIN, (role.burstMax || BURST_MAX) + 1));
+        const discipline = (npc.personality && npc.personality.burstDiscipline) || 1;
+        const burstMin = Math.max(1, Math.round((role.burstMin || BURST_MIN) * discipline));
+        const burstMax = Math.max(burstMin, Math.round((role.burstMax || BURST_MAX) * discipline));
+        npc.burstShotsRemaining = Math.floor(randomRange(burstMin, burstMax + 1));
+        npc.readyToFireAt = now + randomRange(35, 130) + (npc.isMoving ? randomRange(70, 160) : 0);
+        if (now < npc.readyToFireAt) return;
       }
 
       const origin = this.tempShotOrigin.set(npc.x, (npc.y || 0) + NPC.height * 0.62, npc.z);
@@ -1457,9 +1623,16 @@
         .copy(this.tempShotTarget.set(this.player.x, this.player.y + this.player.getEyeHeight(), this.player.z))
         .sub(origin)
         .normalize();
-      const distanceSpread = clamp((distanceToPlayer || 0) / NPC.visionRange, 0, 1) * 0.085;
-      const movementSpread = npc.isMoving ? 0.018 : 0;
-      const mistakeSpread = Math.random() < (npc.roleKey === 'sniper' ? 0.08 : 0.18) ? randomRange(0.035, 0.09) : 0;
+      const visionRange = npc.visionRange || NPC.visionRange;
+      const playerSpeedFactor = clamp(Math.hypot(this.lastPlayerMoveX || 0, this.lastPlayerMoveZ || 0), 0, 1);
+      const personality = npc.personality || {};
+      const accuracyBias = npc.accuracyBias || 1;
+      const distanceSpread = clamp((distanceToPlayer || 0) / visionRange, 0, 1) * 0.085;
+      const movementSpread = npc.isMoving ? 0.022 : 0;
+      const playerMovementSpread = playerSpeedFactor * (distanceToPlayer > 180 ? 0.018 : 0.009);
+      const aimWaver = ((personality.aimWaver || 1) - 0.75) * 0.022;
+      const mistakeChance = clamp((npc.roleKey === 'sniper' ? 0.08 : 0.18) + (1.08 - accuracyBias) * 0.24, 0.04, 0.34);
+      const mistakeSpread = Math.random() < mistakeChance ? randomRange(0.028, 0.095) : 0;
       const armInjurySpread = npc.armInjuryUntil && now < npc.armInjuryUntil ? 0.06 : 0;
       const suppressSpread = npc.tacticalOrder === 'suppress' ? 0.022 : 0;
       const cautiousSpread = now < (npc.cautiousUntil || 0) ? -0.012 : 0;
@@ -1468,6 +1641,8 @@
       const spread = Math.max(0.006, (npc.bulletSpread || NPC.bulletSpread)
         + distanceSpread
         + movementSpread
+        + playerMovementSpread
+        + aimWaver
         + mistakeSpread
         + armInjurySpread
         + cautiousSpread
@@ -1503,11 +1678,13 @@
       const lineZ = this.player.z - npc.z;
       const lineLengthSq = lineX * lineX + lineZ * lineZ;
       if (lineLengthSq <= 1) return false;
+      const maxRiskDistanceSq = Math.min(lineLengthSq, NPC.visionRange * NPC.visionRange);
 
       for (const ally of this.npcs) {
         if (!ally.alive || ally === npc) continue;
         const allyX = ally.x - npc.x;
         const allyZ = ally.z - npc.z;
+        if (allyX * allyX + allyZ * allyZ > maxRiskDistanceSq) continue;
         const t = (allyX * lineX + allyZ * lineZ) / lineLengthSq;
         if (t <= 0.08 || t >= 0.92) continue;
         const closestX = npc.x + lineX * t;

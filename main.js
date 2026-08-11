@@ -180,6 +180,7 @@
   let smoothedRenderTime = 0;
   let lastHeapSize = 0;
   let garbageCollections = 0;
+  const movementKeys = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight'];
 
   function resize() {
     camera.aspect = window.innerWidth / window.innerHeight;
@@ -387,6 +388,15 @@
     }
 
     if (event.code === 'Tab' && !event.repeat) {
+      if (hud.mapDialog && !hud.mapDialog.classList.contains('hidden')) {
+        mapSystem.close();
+        if (running) {
+          modeSystem.paused = false;
+          requestPointerLockSafely();
+        }
+        return;
+      }
+
       modeSystem.togglePause();
       return;
     }
@@ -395,7 +405,7 @@
       return;
     }
 
-    if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight'].includes(event.code)) {
+    if (movementKeys.includes(event.code)) {
       player.setKey(event.code, true);
     }
 
@@ -431,8 +441,11 @@
   });
 
   window.addEventListener('keyup', (event) => {
+    if (movementKeys.includes(event.code)) {
+      player.setKey(event.code, false);
+    }
+
     if (modeSystem.paused) return;
-    player.setKey(event.code, false);
   });
 
   window.addEventListener('mousemove', (event) => {

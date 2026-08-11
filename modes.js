@@ -3,22 +3,92 @@
 
   const STORAGE_KEY = 'canvasArena3d.records';
   const MONEY_PER_KILL = 85;
+  const MAX_SURVIVAL_NPCS = 28;
+
+  const WAVE_EVENTS = [
+    {
+      id: 'patrol',
+      title: 'Патруль',
+      short: 'ПАТРУЛЬ',
+      description: 'Сбалансированная группа противников.',
+      roles: { assault: 1, rifleman: 3, sniper: 0, heavy: 0, commander: 0 },
+      countBonus: 0,
+      health: 1,
+      speed: 1,
+      accuracy: 1,
+      reaction: 1,
+      reward: 1
+    },
+    {
+      id: 'rush',
+      title: 'Штурмовая волна',
+      short: 'ШТУРМ',
+      description: 'Больше быстрых штурмовиков, меньше времени на прицеливание.',
+      roles: { assault: 4, rifleman: 2, sniper: 0, heavy: 0, commander: 0 },
+      countBonus: 1,
+      health: 0.94,
+      speed: 1.12,
+      accuracy: 1.04,
+      reaction: 0.88,
+      reward: 1.08
+    },
+    {
+      id: 'marksmen',
+      title: 'Дальняя дуэль',
+      short: 'СТРЕЛКИ',
+      description: 'Стрелки и снайперы держат дистанцию и стреляют точнее.',
+      roles: { assault: 0, rifleman: 4, sniper: 2, heavy: 0, commander: 0 },
+      countBonus: -1,
+      health: 0.98,
+      speed: 0.96,
+      accuracy: 0.78,
+      reaction: 0.96,
+      reward: 1.16
+    },
+    {
+      id: 'heavy',
+      title: 'Тяжёлая группа',
+      short: 'ТЯЖЁЛЫЕ',
+      description: 'Меньше противников, но больше подавляющего огня.',
+      roles: { assault: 1, rifleman: 2, sniper: 0, heavy: 2, commander: 0 },
+      countBonus: -1,
+      health: 1.13,
+      speed: 0.94,
+      accuracy: 0.94,
+      reaction: 1.04,
+      reward: 1.18
+    },
+    {
+      id: 'command',
+      title: 'Командная группа',
+      short: 'КОМАНДИР',
+      description: 'Командир координирует союзников, волна лучше держит позиции.',
+      roles: { assault: 2, rifleman: 3, sniper: 1, heavy: 1, commander: 1 },
+      countBonus: 0,
+      health: 1.06,
+      speed: 1.02,
+      accuracy: 0.88,
+      reaction: 0.9,
+      reward: 1.24
+    }
+  ];
 
   const SHOP_ITEMS = [
-    { id: 'health', title: 'Аптечка', price: 120, description: '+45 здоровья' },
-    { id: 'armor', title: 'Броня', price: 140, description: '+45 брони' },
-    { id: 'ammo', title: 'Патроны', price: 110, description: '+30 пистолет / +90 автомат' },
+    { id: 'health', title: 'Аптечка', price: 105, description: '+45 здоровья' },
+    { id: 'armor', title: 'Броня', price: 125, description: '+45 брони' },
+    { id: 'ammo', title: 'Боекомплект', price: 105, description: '+30 пистолет / +90 автомат' },
+    { id: 'fullAmmo', title: 'Полный боезапас', price: 240, description: 'Пополнить оба оружия до максимума' },
     { id: 'pistol', title: 'Пистолет', price: 160, description: 'Полный магазин и запас' },
     { id: 'rifle', title: 'Автомат', price: 280, description: 'Полный магазин и запас' },
     { id: 'shotgun', title: 'Дробовик', price: 420, description: 'Куплен для арсенала режима' },
     { id: 'sniper', title: 'Снайперская винтовка', price: 520, description: 'Куплена для арсенала режима' },
     { id: 'grenades', title: 'Гранаты', price: 260, description: '+2 гранаты в инвентарь режима' },
-    { id: 'maxHealth', title: '+20 здоровья', price: 220, description: 'Увеличить максимум здоровья' },
-    { id: 'maxArmor', title: '+20 брони', price: 220, description: 'Увеличить максимум брони' },
-    { id: 'sprint', title: 'Более быстрый бег', price: 260, description: '+8% к бегу' },
-    { id: 'reload', title: 'Более быстрая перезарядка', price: 300, description: '-10% ко времени перезарядки' },
-    { id: 'spread', title: 'Меньший разброс', price: 320, description: '-10% к разбросу' },
-    { id: 'magazine', title: 'Увеличенный магазин', price: 360, description: '+4 пистолет / +8 автомат' }
+    { id: 'maxHealth', title: '+20 здоровья', price: 220, description: 'Увеличить максимум здоровья', max: 5 },
+    { id: 'maxArmor', title: '+20 брони', price: 220, description: 'Увеличить максимум брони', max: 5 },
+    { id: 'sprint', title: 'Более быстрый бег', price: 260, description: '+8% к бегу', max: 4 },
+    { id: 'reload', title: 'Более быстрая перезарядка', price: 300, description: '-10% ко времени перезарядки', max: 4 },
+    { id: 'spread', title: 'Меньший разброс', price: 320, description: '-10% к разбросу', max: 4 },
+    { id: 'magazine', title: 'Увеличенный магазин', price: 360, description: '+4 пистолет / +8 автомат', max: 4 }
   ];
 
   class GameModeSystem {
@@ -42,6 +112,9 @@
       this.lastKillCount = 0;
       this.currentStreak = 0;
       this.bestStreak = 0;
+      this.currentWavePlan = null;
+      this.currentKillReward = MONEY_PER_KILL;
+      this.lastWaveReward = 0;
       this.pickups = [];
       this.lootSystem = null;
       this.baseSystem = null;
@@ -125,6 +198,9 @@
       this.waveInProgress = false;
       this.money = 0;
       this.earnedMoney = 0;
+      this.currentWavePlan = null;
+      this.currentKillReward = MONEY_PER_KILL;
+      this.lastWaveReward = 0;
       this.restoreBaseProgression();
       this.closeMenus();
       this.hideDefeat();
@@ -150,6 +226,9 @@
       this.bestStreak = 0;
       this.wave = 1;
       this.survivalStartAt = performance.now();
+      this.currentWavePlan = null;
+      this.currentKillReward = MONEY_PER_KILL;
+      this.lastWaveReward = 0;
       this.restoreBaseProgression();
       this.closeMenus();
       this.hideDefeat();
@@ -230,7 +309,7 @@
       this.lastKillCount = kills;
 
       if (this.mode === 'survival') {
-        const reward = gained * MONEY_PER_KILL;
+        const reward = gained * (this.currentKillReward || MONEY_PER_KILL);
         this.money += reward;
         this.earnedMoney += reward;
         this.updateMoneyHud();
@@ -244,22 +323,95 @@
       this.nextWaveAt = 0;
       this.currentStreak = 0;
       this.hideShop();
+      this.currentWavePlan = this.createWavePlan(this.wave);
+      this.currentKillReward = this.currentWavePlan.killReward;
       this.showWaveBanner();
 
-      const count = 5 + (this.wave - 1) * 3;
-      const stats = {
-        maxHealth: window.GameConfig.NPC.maxHealth + (this.wave - 1) * 16,
-        speed: window.GameConfig.NPC.speed * (1 + (this.wave - 1) * 0.055),
-        bulletSpread: Math.max(0.014, window.GameConfig.NPC.bulletSpread - (this.wave - 1) * 0.0035)
-      };
-      this.npcs.spawnWave(count, stats);
+      this.npcs.spawnWave(this.currentWavePlan.count, this.currentWavePlan.stats);
       this.updateSurvivalHud(performance.now());
+    }
+
+    createWavePlan(wave) {
+      const tier = Math.floor((wave - 1) / 3);
+      const event = this.getWaveEvent(wave);
+      const baseCount = 5 + Math.floor((wave - 1) * 1.55) + event.countBonus;
+      const count = Math.max(4, Math.min(MAX_SURVIVAL_NPCS, baseCount));
+      const pressure = Math.min(1, (wave - 1) / 16);
+      const healthScale = event.health * (1 + tier * 0.08 + (wave - 1) * 0.025);
+      const speedScale = event.speed * (1 + pressure * 0.22);
+      const accuracyScale = event.accuracy * Math.max(0.58, 1 - (wave - 1) * 0.028);
+      const reactionScale = event.reaction * Math.max(0.58, 1 - (wave - 1) * 0.026);
+      const roles = this.buildWaveRoles(count, event, wave);
+      const killReward = Math.round((MONEY_PER_KILL + wave * 7) * event.reward);
+      const completionReward = Math.round((180 + wave * 52 + count * 12) * event.reward);
+
+      return {
+        wave,
+        event,
+        count,
+        roles,
+        killReward,
+        completionReward,
+        stats: {
+          maxHealth: window.GameConfig.NPC.maxHealth * healthScale,
+          speed: window.GameConfig.NPC.speed * speedScale,
+          bulletSpread: Math.max(0.013, window.GameConfig.NPC.bulletSpread * accuracyScale),
+          visionRange: window.GameConfig.NPC.visionRange * (1 + Math.min(0.22, wave * 0.012)),
+          reactionMultiplier: reactionScale,
+          roleKeys: roles
+        }
+      };
+    }
+
+    getWaveEvent(wave) {
+      if (wave <= 2) return WAVE_EVENTS[0];
+      if (wave % 7 === 0) return WAVE_EVENTS[4];
+      if (wave % 5 === 0) return WAVE_EVENTS[3];
+      if (wave % 4 === 0) return WAVE_EVENTS[2];
+      if (wave % 3 === 0) return WAVE_EVENTS[1];
+      return WAVE_EVENTS[0];
+    }
+
+    buildWaveRoles(count, event, wave) {
+      const weights = Object.assign({}, event.roles);
+      if (wave >= 6) weights.heavy += 0.6;
+      if (wave >= 8) weights.sniper += 0.55;
+      if (wave >= 10) weights.commander += 0.35;
+      const entries = Object.keys(weights).filter((key) => weights[key] > 0);
+      const roles = [];
+
+      if (event.id === 'command' && count > 0) roles.push('commander');
+      if (event.id === 'heavy' && count > 1) roles.push('heavy');
+      if (event.id === 'marksmen' && count > 1) roles.push('sniper');
+
+      while (roles.length < count) {
+        roles.push(this.pickWeightedRole(entries, weights, wave + roles.length * 17));
+      }
+
+      return roles.slice(0, count);
+    }
+
+    pickWeightedRole(entries, weights, salt) {
+      let total = 0;
+      for (const key of entries) total += weights[key];
+      let roll = ((Math.sin(salt * 12.9898) * 43758.5453) % 1 + 1) % 1 * total;
+      for (const key of entries) {
+        roll -= weights[key];
+        if (roll <= 0) return key;
+      }
+      return entries[0] || 'rifleman';
     }
 
     completeWave() {
       this.waveInProgress = false;
+      const reward = this.currentWavePlan ? this.currentWavePlan.completionReward : 180 + this.wave * 45;
+      const flawlessBonus = this.player.health >= this.player.maxHealth * 0.82 ? Math.round(reward * 0.2) : 0;
+      this.lastWaveReward = reward + flawlessBonus;
+      this.money += this.lastWaveReward;
+      this.earnedMoney += this.lastWaveReward;
+      this.updateMoneyHud();
       this.spawnRewards();
-      this.openShop('Волна ' + this.wave + ' завершена');
+      this.openShop('Волна ' + this.wave + ' завершена. Награда: +' + this.lastWaveReward + (flawlessBonus ? ' (бонус за здоровье)' : ''));
     }
 
     openShop(message) {
@@ -267,9 +419,15 @@
       this.shopOpen = true;
       if (document.pointerLockElement) document.exitPointerLock();
       if (this.elements.shopScreen) this.elements.shopScreen.classList.remove('hidden');
-      if (this.elements.shopMessage) this.elements.shopMessage.textContent = message || '';
+      if (this.elements.shopMessage) this.elements.shopMessage.textContent = this.buildShopMessage(message);
       this.renderShop();
       this.updateSurvivalHud(performance.now());
+    }
+
+    buildShopMessage(message) {
+      const nextPlan = this.createWavePlan(this.wave + 1);
+      const prefix = message ? message + '  ' : '';
+      return prefix + 'Следующая: ' + nextPlan.event.title + ', врагов: ' + nextPlan.count + ', награда за убийство: +' + nextPlan.killReward + '.';
     }
 
     hideShop() {
@@ -287,7 +445,8 @@
 
     showWaveBanner() {
       if (!this.elements.waveBanner) return;
-      this.elements.waveBanner.textContent = 'ВОЛНА ' + this.wave;
+      const label = this.currentWavePlan ? ' · ' + this.currentWavePlan.event.short : '';
+      this.elements.waveBanner.textContent = 'ВОЛНА ' + this.wave + label;
       this.elements.waveBanner.classList.remove('hidden');
       this.elements.waveBanner.style.animation = 'none';
       this.elements.waveBanner.offsetHeight;
@@ -303,30 +462,47 @@
 
       this.elements.shopItems.innerHTML = SHOP_ITEMS.map((item) => {
         const owned = this.isOwned(item.id);
-        const disabled = owned || this.money < item.price;
-        const buttonText = owned ? 'Куплено' : 'Купить за ' + item.price;
+        const price = this.getShopItemPrice(item);
+        const level = this.getUpgradeLevel(item.id);
+        const levelText = item.max ? ' · ур. ' + level + '/' + item.max : '';
+        const disabled = owned || this.money < price;
+        const buttonText = owned ? (item.max ? 'Максимум' : 'Куплено') : 'Купить за ' + price;
         return '<article class="shop-item">'
           + '<strong>' + item.title + '</strong>'
-          + '<small>' + item.description + '</small>'
+          + '<small>' + item.description + levelText + '</small>'
           + '<button type="button" data-shop-item="' + item.id + '"' + (disabled ? ' disabled' : '') + '>' + buttonText + '</button>'
           + '</article>';
       }).join('');
     }
 
+    getUpgradeLevel(id) {
+      return this.upgrades[id] || 0;
+    }
+
+    getShopItemPrice(item) {
+      const level = this.getUpgradeLevel(item.id);
+      if (!item.max) return item.price;
+      return Math.round(item.price * Math.pow(1.32, level));
+    }
+
     isOwned(id) {
+      const item = SHOP_ITEMS.find((entry) => entry.id === id);
+      if (item && item.max) return this.getUpgradeLevel(id) >= item.max;
       return (id === 'shotgun' && this.inventory.shotgun)
         || (id === 'sniper' && this.inventory.sniper);
     }
 
     buyItem(id) {
       const item = SHOP_ITEMS.find((entry) => entry.id === id);
-      if (!item || this.money < item.price || this.isOwned(id)) return;
+      if (!item || this.isOwned(id)) return;
+      const price = this.getShopItemPrice(item);
+      if (this.money < price) return;
 
-      this.money -= item.price;
+      this.money -= price;
       this.applyPurchase(id);
       this.updateMoneyHud();
       this.renderShop();
-      if (this.elements.shopMessage) this.elements.shopMessage.textContent = item.title + ' куплено';
+      if (this.elements.shopMessage) this.elements.shopMessage.textContent = item.title + ' куплено. ' + this.buildShopMessage('');
     }
 
     applyPurchase(id) {
@@ -337,6 +513,11 @@
       } else if (id === 'ammo') {
         this.weapons.addAmmoFor('pistol', 30);
         this.weapons.addAmmoFor('rifle', 90);
+      } else if (id === 'fullAmmo') {
+        this.weapons.ammo.pistol.reserve = Math.max(this.weapons.ammo.pistol.reserve, window.GameConfig.WEAPONS.pistol.reserveAmmo);
+        this.weapons.ammo.rifle.reserve = Math.max(this.weapons.ammo.rifle.reserve, window.GameConfig.WEAPONS.rifle.reserveAmmo);
+        this.weapons.ammo.pistol.magazine = window.GameConfig.WEAPONS.pistol.magazineSize;
+        this.weapons.ammo.rifle.magazine = window.GameConfig.WEAPONS.rifle.magazineSize;
       } else if (id === 'pistol') {
         this.weapons.addAmmoFor('pistol', 90);
         this.weapons.ammo.pistol.magazine = window.GameConfig.WEAPONS.pistol.magazineSize;
@@ -440,9 +621,11 @@
     updateSurvivalHud(now) {
       if (this.elements.moneyValue) this.elements.moneyValue.textContent = String(this.money);
       if (!this.elements.survivalHud) return;
+      const plan = this.currentWavePlan;
+      const alive = this.mode === 'survival' ? this.npcs.aliveCount() : '—';
       this.elements.waveNumber.textContent = String(this.mode === 'survival' ? this.wave : '—');
-      this.elements.waveEnemies.textContent = String(this.mode === 'survival' ? this.npcs.aliveCount() : '—');
-      this.elements.waveTimer.textContent = this.shopOpen ? 'МАГАЗИН' : this.waveInProgress ? 'БОЙ' : '—';
+      this.elements.waveEnemies.textContent = this.mode === 'survival' && plan ? alive + '/' + plan.count : String(alive);
+      this.elements.waveTimer.textContent = this.shopOpen ? 'ПОДГОТОВКА' : this.waveInProgress && plan ? plan.event.short : '—';
     }
 
     updateMoneyHud() {

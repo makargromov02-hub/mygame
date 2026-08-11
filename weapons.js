@@ -55,6 +55,10 @@
       this.breathTime = 0;
       this.recoil = 0;
       this.recoilLift = 0;
+      this.recoilYaw = 0;
+      this.shotHeat = 0;
+      this.lastShotTime = 0;
+      this.muzzleFlashPower = 0;
       this.muzzleFlashTime = 0;
       this.bullets = [];
       this.effects = [];
@@ -75,6 +79,7 @@
       this.tempViewPosition = new THREE.Vector3();
       this.tempViewRotation = new THREE.Euler();
       this.tempMarkForward = new THREE.Vector3(0, 0, 1);
+      this.tempMuzzlePoint = new THREE.Vector3();
       this.ammo = {
         pistol: { magazine: WEAPONS.pistol.magazineSize, reserve: WEAPONS.pistol.reserveAmmo },
         rifle: { magazine: WEAPONS.rifle.magazineSize, reserve: WEAPONS.rifle.reserveAmmo }
@@ -290,6 +295,10 @@
       this.swapTime = 0;
       this.recoil = 0;
       this.recoilLift = 0;
+      this.recoilYaw = 0;
+      this.shotHeat = 0;
+      this.lastShotTime = 0;
+      this.muzzleFlashPower = 0;
       this.muzzleFlashTime = 0;
       this.player.aimSlowMultiplier = 1;
       this.player.camera.fov = VIEWMODEL.baseFov;
@@ -349,6 +358,9 @@
       this.swapTime = VIEWMODEL.swapDuration;
       this.recoil = 0;
       this.recoilLift = 0;
+      this.recoilYaw = 0;
+      this.shotHeat = 0;
+      this.muzzleFlashPower = 0;
       this.muzzleFlashTime = 0;
       this.isAiming = false;
       this.updateHud(performance.now());
@@ -409,7 +421,7 @@
       const baseDirection = this.player.getShootDirectionTo
         ? this.player.getShootDirectionTo(this.tempBaseDirection)
         : this.tempBaseDirection.copy(this.player.getShootDirection());
-      const direction = applyYawSpreadTo(this.tempShootDirection, baseDirection, weapon.spread * this.getSpreadMultiplier());
+      const direction = applyYawSpreadTo(this.tempShootDirection, baseDirection, this.getShotSpread(weapon, now));
       this.spawnBullet('player', origin, direction, weapon);
       this.spawnMuzzleSmoke(origin, direction, weapon);
       this.kickWeapon();
@@ -418,6 +430,20 @@
       ammo.magazine -= 1;
       this.nextShotAt = now + weapon.fireDelay;
       this.updateHud(now);
+    }
+
+    getShotSpread(weapon, now) {
+      const timeSinceShot = this.lastShotTime ? now - this.lastShotTime : 9999;
+      const cooldown = this.current === 'rifle' ? 0.78 : 1.28;
+      this.shotHeat = Math.max(0, this.shotHeat - timeSinceShot / 1000 * cooldown);
+      const heatGain = this.current === 'rifle' ? 0.105 : 0.18;
+      this.shotHeat = Math.min(1.35, this.shotHeat + heatGain * (this.aimAmount > 0.7 ? 0.68 : 1));
+      this.lastShotTime = now;
+
+      const heatSpread = this.current === 'rifle'
+        ? this.shotHeat * 0.012
+        : Math.max(0, this.shotHeat - 0.22) * 0.0045;
+      return weapon.spread * this.getSpreadMultiplier() + heatSpread;
     }
 
     spawnNpcBullet(origin, direction) {
@@ -608,22 +634,30 @@
       hitPosition.y = Math.max(2, hitPosition.y);
       this.addBulletMark(hitPosition, impact.normal, impact.material);
 
-      const particleCount = impact.material === 'metal' ? 12 : impact.material === 'concrete' ? 10 : 7;
+      const particleCount = impact.material === 'metal' ? 14
+        : impact.material === 'concrete' ? 11
+          : impact.material === 'wood' ? 9
+            : impact.material === 'dirt' ? 5
+              : 7;
       for (let i = 0; i < particleCount; i += 1) {
         const dir = this.tempEffectDirection.copy(velocity).normalize().multiplyScalar(-1);
-        dir.x += (Math.random() - 0.5) * 1.3;
-        dir.y += randomSigned(0.9) + 0.7;
-        dir.z += (Math.random() - 0.5) * 1.3;
+        const materialScatter = impact.material === 'metal' ? 1.75 : impact.material === 'wood' ? 1.25 : 1.05;
+        dir.x += randomSigned(materialScatter);
+        dir.y += randomSigned(0.75) + (impact.material === 'metal' ? 0.55 : 0.72);
+        dir.z += randomSigned(materialScatter);
         const particleColor = this.getImpactParticleColor(impact.material, color);
-        const speed = impact.material === 'metal' ? 220 + Math.random() * 260 : 90 + Math.random() * 170;
-        this.addParticle(hitPosition, this.tempEffectVelocity.copy(dir).normalize().multiplyScalar(speed), particleColor, impact.material === 'concrete' ? 3.2 : 2.3, 0.34, true);
+        const speed = impact.material === 'metal' ? 260 + Math.random() * 330
+          : impact.material === 'wood' ? 115 + Math.random() * 190
+            : 90 + Math.random() * 170;
+        const size = impact.material === 'metal' ? 1.9 : impact.material === 'concrete' ? 3.2 : impact.material === 'wood' ? 3.6 : 2.4;
+        this.addParticle(hitPosition, this.tempEffectVelocity.copy(dir).normalize().multiplyScalar(speed), particleColor, size, impact.material === 'metal' ? 0.24 : 0.34, true);
       }
 
-      const smokeCount = impact.material === 'dirt' ? 9 : 5;
+      const smokeCount = impact.material === 'dirt' ? 11 : impact.material === 'concrete' ? 6 : impact.material === 'wood' ? 4 : 3;
       for (let i = 0; i < smokeCount; i += 1) {
         const dir = this.tempEffectDirection.set(randomSigned(0.55), 0.35 + Math.random() * 0.5, randomSigned(0.55)).normalize();
-        const dustColor = impact.material === 'dirt' ? 0x8f8064 : 0x9fa8ad;
-        this.addParticle(hitPosition, this.tempEffectVelocity.copy(dir).multiplyScalar(30 + Math.random() * 48), dustColor, impact.material === 'dirt' ? 11 : 8, 0.8, false);
+        const dustColor = impact.material === 'dirt' ? 0x8f8064 : impact.material === 'wood' ? 0x7d5a37 : 0x9fa8ad;
+        this.addParticle(hitPosition, this.tempEffectVelocity.copy(dir).multiplyScalar(30 + Math.random() * 48), dustColor, impact.material === 'dirt' ? 12 : 8, impact.material === 'dirt' ? 0.9 : 0.72, false);
       }
 
       if (impact.material === 'concrete') {
@@ -696,6 +730,7 @@
       if (material === 'concrete') return 0xb8b0a6;
       if (material === 'wood') return 0x8b5a32;
       if (material === 'dirt') return 0x9a8058;
+      if (material === 'glass') return 0xaee8ff;
       return fallback;
     }
 
@@ -716,6 +751,7 @@
 
     spawnMuzzleSmoke(origin, direction, weapon) {
       const muzzle = this.tempEffectPosition.copy(origin).add(this.tempEffectDirection.copy(direction).multiplyScalar(this.current === 'rifle' ? 82 : 58));
+      this.tempMuzzlePoint.copy(muzzle);
 
       for (let i = 0; i < (this.current === 'rifle' ? 5 : 3); i += 1) {
         const drift = this.tempEffectDirection.copy(direction).multiplyScalar(18 + Math.random() * 25);
@@ -723,6 +759,15 @@
         drift.y += 14 + Math.random() * 18;
         drift.z += randomSigned(20);
         this.addParticle(muzzle, this.tempEffectVelocity.copy(drift), 0x9fa8ad, this.current === 'rifle' ? 6.5 : 5.2, 0.55 + Math.random() * 0.25, false);
+      }
+
+      const sparkCount = this.current === 'rifle' ? 3 : 2;
+      for (let i = 0; i < sparkCount; i += 1) {
+        const spark = this.tempEffectDirection.copy(direction);
+        spark.x += randomSigned(0.22);
+        spark.y += randomSigned(0.18);
+        spark.z += randomSigned(0.22);
+        this.addParticle(muzzle, this.tempEffectVelocity.copy(spark).normalize().multiplyScalar(160 + Math.random() * 120), this.current === 'rifle' ? 0xff9f5a : 0xffd36b, this.current === 'rifle' ? 2.2 : 2.6, 0.16, false);
       }
     }
 
@@ -1020,14 +1065,20 @@
     }
 
     kickWeapon() {
-      this.recoil = Math.min(1, this.recoil + this.weapon.recoilKick * (this.aimAmount > 0.7 ? 0.78 : 1));
-      this.recoilLift = Math.min(1, this.recoilLift + this.weapon.recoilLift * 7);
-      this.crosshairKick = Math.min(28, this.crosshairKick + (this.current === 'rifle' ? 5 : 8));
-      this.muzzleFlashTime = 0.055;
+      const adsScale = this.aimAmount > 0.7 ? 0.72 : 1;
+      const rifle = this.current === 'rifle';
+      const heatScale = 1 + Math.min(0.35, this.shotHeat * (rifle ? 0.16 : 0.08));
+      this.recoil = Math.min(1, this.recoil + this.weapon.recoilKick * adsScale * heatScale);
+      this.recoilLift = Math.min(1, this.recoilLift + this.weapon.recoilLift * (rifle ? 7.8 : 8.9) * adsScale);
+      this.recoilYaw = clamp(this.recoilYaw + randomSigned(rifle ? 0.16 : 0.24) + (rifle ? this.shotHeat * 0.025 : 0), -0.8, 0.8);
+      this.crosshairKick = Math.min(32, this.crosshairKick + (rifle ? 4.7 + this.shotHeat * 2.2 : 9.5));
+      this.muzzleFlashTime = rifle ? 0.045 : 0.062;
+      this.muzzleFlashPower = rifle ? 0.95 + Math.random() * 0.42 : 1.2 + Math.random() * 0.55;
       this.activeWeaponView.flash.visible = true;
       this.activeWeaponView.flash.rotation.z = Math.random() * Math.PI;
-      this.player.addCameraShake(this.current === 'rifle' ? 0.12 : 0.18);
-      this.player.pitch = clamp(this.player.pitch + this.weapon.recoilLift * (this.aimAmount > 0.7 ? 0.42 : 0.68), -1.25, 1.25);
+      this.player.addCameraShake(rifle ? 0.105 + this.shotHeat * 0.025 : 0.19);
+      this.player.pitch = clamp(this.player.pitch + this.weapon.recoilLift * (this.aimAmount > 0.7 ? 0.46 : 0.74) * (rifle ? 0.85 + this.shotHeat * 0.18 : 1.18), -1.25, 1.25);
+      this.player.yaw += randomSigned(rifle ? 0.0014 : 0.0026) * (this.aimAmount > 0.7 ? 0.55 : 1);
       this.player.updateCamera();
     }
 
@@ -1048,6 +1099,8 @@
       this.breathTime += dt * 1.55;
       this.recoil = Math.max(0, this.recoil - dt * 6.8);
       this.recoilLift = Math.max(0, this.recoilLift - dt * 5.4);
+      this.recoilYaw += (0 - this.recoilYaw) * (1 - Math.exp(-7.5 * dt));
+      this.shotHeat = Math.max(0, this.shotHeat - dt * (this.current === 'rifle' ? 0.72 : 1.1));
       this.crosshairKick = Math.max(0, this.crosshairKick - dt * 32);
       this.muzzleFlashTime = Math.max(0, this.muzzleFlashTime - dt);
       this.drawTime = Math.max(0, this.drawTime - dt);
@@ -1085,7 +1138,7 @@
       );
       active.group.rotation.set(
         targetRotation.x - this.recoil * 0.28 - this.recoilLift * 0.08 - drawProgress * 0.42,
-        targetRotation.y + bobX * 0.55,
+        targetRotation.y + bobX * 0.55 + this.recoilYaw * 0.05,
         targetRotation.z + Math.sin(this.bobTime * 0.5) * bobStrength * 0.7 + reloadRoll
       );
 
@@ -1095,7 +1148,7 @@
 
       active.flash.visible = this.muzzleFlashTime > 0;
       if (active.flash.visible) {
-        const flashScale = 0.8 + Math.random() * 0.45;
+        const flashScale = (0.72 + Math.random() * 0.42) * (this.muzzleFlashPower || 1);
         active.flash.scale.set(flashScale, flashScale, flashScale);
       }
     }
@@ -1137,7 +1190,8 @@
       const movement = this.player.isMoving ? (this.player.isSprinting ? 13 : 6) : 0;
       const airborne = this.player.isGrounded ? 0 : 12;
       const shotKick = this.crosshairKick * (this.aimAmount > 0.55 ? 0.62 : 1);
-      const scale = clamp(1 + (movement + airborne + shotKick) * 0.018 - this.aimAmount * 0.12, 0.82, 1.65).toFixed(3);
+      const heat = this.current === 'rifle' ? this.shotHeat * 0.1 : this.shotHeat * 0.035;
+      const scale = clamp(1 + (movement + airborne + shotKick) * 0.018 + heat - this.aimAmount * 0.12, 0.82, 1.72).toFixed(3);
       crosshair.style.setProperty('--crosshair-scale', scale);
       crosshair.style.transform = 'translate(-50%, -50%) scale(' + scale + ')';
       crosshair.classList.toggle('crosshair-ads', this.aimAmount > 0.5);
@@ -1150,6 +1204,7 @@
       if (this.player.isCrouching) multiplier *= 0.86;
       multiplier *= 1 - this.aimAmount * 0.58;
       multiplier += this.crosshairKick * 0.012;
+      multiplier += this.current === 'rifle' ? this.shotHeat * 0.16 : this.shotHeat * 0.035;
       return Math.max(0.28, multiplier);
     }
   }
