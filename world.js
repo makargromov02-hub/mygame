@@ -4,6 +4,10 @@
   const { WORLD, MAP_OBJECTS } = window.GameConfig;
   const { clamp, circleIntersectsRect, circleIntersectsCircle, randomRange } = window.GameUtils;
   const WORLD_UP = new THREE.Vector3(0, 1, 0);
+  const LIGHTING_QUALITY = {
+    MOBILE: 'MOBILE',
+    DESKTOP: 'DESKTOP'
+  };
 
   class GameWorld {
     constructor(scene) {
@@ -80,12 +84,19 @@
         buildingLights: [],
         ground: null,
         sky: null,
+        skyHorizon: null,
+        skyZenith: null,
         sunDisc: null,
         sunGlow: null,
         ambient: null,
         sun: null,
-        fill: null
+        sunTarget: null,
+        fill: null,
+        rim: null
       };
+      this.lightingQuality = this.getInitialLightingQuality();
+      this.desktopEnvironmentMap = null;
+      this.desktopAtmosphereGroup = null;
       this.spatialCellSize = 220;
       this.spatialGrid = new Map();
       this.dynamicCollisionObjects = [];
@@ -103,11 +114,32 @@
       this.buildVisualDetailLayer();
       this.optimizeStaticMeshes();
       this.flushContactShadows();
+      this.applyLightingQuality();
       this.registerRenderOptimizations();
     }
 
     setPerformanceProfile(profile) {
+      const previousMobile = this.performanceProfile.mobile;
       this.performanceProfile = Object.assign({}, this.performanceProfile, profile || {});
+      const nextQuality = this.performanceProfile.mobile ? LIGHTING_QUALITY.MOBILE : LIGHTING_QUALITY.DESKTOP;
+      if (this.lightingQuality !== nextQuality || previousMobile !== this.performanceProfile.mobile) {
+        this.lightingQuality = nextQuality;
+        this.applyLightingQuality();
+      }
+    }
+
+    getInitialLightingQuality() {
+      try {
+        return localStorage.getItem('controlMode') === 'mobile'
+          ? LIGHTING_QUALITY.MOBILE
+          : LIGHTING_QUALITY.DESKTOP;
+      } catch (error) {
+        return LIGHTING_QUALITY.DESKTOP;
+      }
+    }
+
+    isDesktopLighting() {
+      return this.lightingQuality === LIGHTING_QUALITY.DESKTOP;
     }
 
     consumePerformanceStats() {
@@ -546,7 +578,7 @@
     buildSky() {
       const skyGeometry = new THREE.SphereGeometry(3600, 32, 16);
       const skyMaterial = new THREE.MeshBasicMaterial({
-        color: 0x88bfe8,
+        color: this.isDesktopLighting() ? 0x9ccbf0 : 0x88bfe8,
         side: THREE.BackSide,
         fog: false
       });
@@ -554,6 +586,7 @@
       sky.position.set(WORLD.width / 2, 0, WORLD.height / 2);
       this.scene.add(sky);
       this.weatherTargets.sky = sky;
+      if (this.isDesktopLighting()) this.createDesktopAtmosphereMeshes();
 
       const sunDisc = new THREE.Mesh(
         new THREE.SphereGeometry(95, 24, 12),
@@ -573,28 +606,175 @@
     }
 
     buildLighting() {
-      const ambient = new THREE.HemisphereLight(0xcdeeff, 0x24341f, 0.78);
+      const ambient = new THREE.HemisphereLight(
+        this.isDesktopLighting() ? 0xdcefff : 0xcdeeff,
+        this.isDesktopLighting() ? 0x4c5c42 : 0x24341f,
+        this.isDesktopLighting() ? 0.92 : 0.78
+      );
       this.scene.add(ambient);
       this.weatherTargets.ambient = ambient;
 
-      const sun = new THREE.DirectionalLight(0xffe4b8, 2.15);
+      const sun = new THREE.DirectionalLight(this.isDesktopLighting() ? 0xffd49b : 0xffe4b8, this.isDesktopLighting() ? 2.42 : 2.15);
       sun.position.set(WORLD.width / 2 - 900, 1250, WORLD.height / 2 - 1200);
       sun.castShadow = true;
-      sun.shadow.mapSize.set(2048, 2048);
-      sun.shadow.radius = 5;
-      sun.shadow.camera.left = -2800;
-      sun.shadow.camera.right = 2800;
-      sun.shadow.camera.top = 2800;
-      sun.shadow.camera.bottom = -2800;
-      sun.shadow.camera.near = 50;
-      sun.shadow.camera.far = 3600;
+      const sunTarget = new THREE.Object3D();
+      sunTarget.position.set(WORLD.width / 2, 0, WORLD.height / 2);
+      this.scene.add(sunTarget);
+      sun.target = sunTarget;
+      this.weatherTargets.sunTarget = sunTarget;
       this.scene.add(sun);
       this.weatherTargets.sun = sun;
 
-      const fill = new THREE.DirectionalLight(0x7eb7ff, 0.28);
+      const fill = new THREE.DirectionalLight(0x8fc4ff, this.isDesktopLighting() ? 0.34 : 0.28);
       fill.position.set(WORLD.width / 2 + 1200, 500, WORLD.height / 2 + 900);
       this.scene.add(fill);
       this.weatherTargets.fill = fill;
+
+      if (this.isDesktopLighting()) {
+        const rim = new THREE.DirectionalLight(0xb9d9ff, 0.16);
+        rim.position.set(WORLD.width / 2 + 1500, 820, WORLD.height / 2 - 1450);
+        rim.castShadow = false;
+        rim.target = sunTarget;
+        this.scene.add(rim);
+        this.weatherTargets.rim = rim;
+      }
+
+      this.applyLightingQuality();
+    }
+
+    createDesktopAtmosphereMeshes() {
+      if (this.desktopAtmosphereGroup) return;
+      const group = new THREE.Group();
+      group.position.set(WORLD.width / 2, 0, WORLD.height / 2);
+
+      const horizon = new THREE.Mesh(
+        new THREE.CylinderGeometry(3580, 3580, 620, 64, 1, true),
+        new THREE.MeshBasicMaterial({
+          color: 0xffd8a8,
+          transparent: true,
+          opacity: 0.11,
+          depthWrite: false,
+          side: THREE.BackSide,
+          fog: false
+        })
+      );
+      horizon.position.y = 245;
+      group.add(horizon);
+
+      const zenith = new THREE.Mesh(
+        new THREE.SphereGeometry(3550, 32, 12),
+        new THREE.MeshBasicMaterial({
+          color: 0x4f8fc9,
+          transparent: true,
+          opacity: 0.075,
+          depthWrite: false,
+          side: THREE.BackSide,
+          fog: false
+        })
+      );
+      zenith.position.y = 80;
+      group.add(zenith);
+
+      this.scene.add(group);
+      this.desktopAtmosphereGroup = group;
+      this.weatherTargets.skyHorizon = horizon;
+      this.weatherTargets.skyZenith = zenith;
+    }
+
+    disposeDesktopAtmosphereMeshes() {
+      if (!this.desktopAtmosphereGroup) return;
+      this.desktopAtmosphereGroup.traverse((child) => {
+        if (!child.isMesh) return;
+        if (child.geometry) child.geometry.dispose();
+        if (child.material) child.material.dispose();
+      });
+      if (this.desktopAtmosphereGroup.parent) this.desktopAtmosphereGroup.parent.remove(this.desktopAtmosphereGroup);
+      this.desktopAtmosphereGroup = null;
+      this.weatherTargets.skyHorizon = null;
+      this.weatherTargets.skyZenith = null;
+    }
+
+    createDesktopEnvironmentMap() {
+      if (this.desktopEnvironmentMap) return this.desktopEnvironmentMap;
+      const colors = [0xbdddf4, 0xa5c7e5, 0xf1d7ad, 0x4b5c64, 0x95c9ef, 0xd7c3a1];
+      const canvases = colors.map((color) => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 16;
+        canvas.height = 16;
+        const context = canvas.getContext('2d');
+        const gradient = context.createLinearGradient(0, 0, 0, 16);
+        const base = new THREE.Color(color);
+        const high = base.clone().lerp(new THREE.Color(0xffffff), 0.24);
+        const low = base.clone().lerp(new THREE.Color(0x1f2933), 0.18);
+        gradient.addColorStop(0, '#' + high.getHexString());
+        gradient.addColorStop(1, '#' + low.getHexString());
+        context.fillStyle = gradient;
+        context.fillRect(0, 0, 16, 16);
+        return canvas;
+      });
+      const texture = new THREE.CubeTexture(canvases);
+      texture.needsUpdate = true;
+      texture.colorSpace = THREE.SRGBColorSpace;
+      this.desktopEnvironmentMap = texture;
+      return texture;
+    }
+
+    disposeDesktopEnvironmentMap() {
+      if (!this.desktopEnvironmentMap) return;
+      if (this.scene.environment === this.desktopEnvironmentMap) this.scene.environment = null;
+      this.desktopEnvironmentMap.dispose();
+      this.desktopEnvironmentMap = null;
+    }
+
+    applyLightingQuality() {
+      const desktop = this.isDesktopLighting();
+      if (desktop) {
+        this.createDesktopAtmosphereMeshes();
+        this.scene.environment = this.createDesktopEnvironmentMap();
+      } else {
+        this.disposeDesktopAtmosphereMeshes();
+        this.disposeDesktopEnvironmentMap();
+      }
+
+      const targets = this.weatherTargets;
+      if (targets.sky && targets.sky.material && targets.sky.material.color) {
+        targets.sky.material.color.setHex(desktop ? 0x9ccbf0 : 0x88bfe8);
+      }
+      if (targets.ambient) {
+        targets.ambient.color.setHex(desktop ? 0xdcefff : 0xcdeeff);
+        targets.ambient.groundColor.setHex(desktop ? 0x4c5c42 : 0x24341f);
+        targets.ambient.intensity = desktop ? 0.92 : 0.78;
+      }
+      if (targets.sun) {
+        targets.sun.color.setHex(desktop ? 0xffd49b : 0xffe4b8);
+        targets.sun.intensity = desktop ? 2.42 : 2.15;
+        targets.sun.shadow.mapSize.set(desktop ? 3072 : 2048, desktop ? 3072 : 2048);
+        targets.sun.shadow.radius = desktop ? 4 : 5;
+        targets.sun.shadow.bias = desktop ? -0.00008 : 0;
+        targets.sun.shadow.normalBias = desktop ? 1.65 : 0;
+        targets.sun.shadow.camera.left = desktop ? -2350 : -2800;
+        targets.sun.shadow.camera.right = desktop ? 2350 : 2800;
+        targets.sun.shadow.camera.top = desktop ? 2350 : 2800;
+        targets.sun.shadow.camera.bottom = desktop ? -2350 : -2800;
+        targets.sun.shadow.camera.near = 80;
+        targets.sun.shadow.camera.far = desktop ? 4300 : 3600;
+        targets.sun.shadow.camera.updateProjectionMatrix();
+        if (targets.sun.shadow.map) {
+          targets.sun.shadow.map.dispose();
+          targets.sun.shadow.map = null;
+        }
+      }
+      if (targets.fill) {
+        targets.fill.color.setHex(desktop ? 0x8fc4ff : 0x7eb7ff);
+        targets.fill.intensity = desktop ? 0.34 : 0.28;
+      }
+      if (targets.rim) {
+        targets.rim.visible = desktop;
+        targets.rim.intensity = desktop ? 0.16 : 0;
+      }
+      if (this.contactShadowMesh && this.contactShadowMesh.material) {
+        this.contactShadowMesh.material.opacity = desktop ? 0.22 : 0.17;
+      }
     }
 
     buildGround() {

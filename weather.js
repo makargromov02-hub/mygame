@@ -211,6 +211,14 @@
       if (targets.sky && targets.sky.material) {
         targets.sky.material.color.copy(skyColor);
       }
+      if (targets.skyHorizon && targets.skyHorizon.material) {
+        targets.skyHorizon.material.color.copy(this.tempColorB.setHex(time.sun).lerp(skyColor, 0.42));
+        targets.skyHorizon.material.opacity = clamp((1 - weather.cloud * 0.35) * (0.08 + time.sunPower * 0.055) + lightning * 0.08, 0.035, 0.19);
+      }
+      if (targets.skyZenith && targets.skyZenith.material) {
+        targets.skyZenith.material.color.copy(this.tempColorC.copy(skyColor).lerp(new THREE.Color(0x244a72), 0.2));
+        targets.skyZenith.material.opacity = clamp(0.045 + (1 - weather.darken) * 0.04 - weather.cloud * 0.02, 0.025, 0.09);
+      }
 
       if (this.scene.fog) {
         const fogColor = this.tempColorB.setHex(time.fog).lerp(this.fogBlendColor, weather.fog * 0.55 + weather.darken * 0.28);
@@ -231,6 +239,7 @@
         );
       }
       if (targets.fill) targets.fill.intensity = time.fill * (1 - weather.darken * 0.35);
+      if (targets.rim) targets.rim.intensity = time.fill * 0.46 * (1 - weather.darken * 0.35);
       if (targets.sunDisc) {
         targets.sunDisc.position.copy(targets.sun.position);
         targets.sunDisc.visible = weather.cloud < 0.78 || time.sunPower > 0.8;
