@@ -97,6 +97,9 @@
       this.lightingQuality = this.getInitialLightingQuality();
       this.desktopEnvironmentMap = null;
       this.desktopAtmosphereGroup = null;
+      this.desktopWorldDetailGroup = null;
+      this.desktopWorldDetailMaterials = null;
+      this.desktopWorldDetailTextures = null;
       this.spatialCellSize = 220;
       this.spatialGrid = new Map();
       this.dynamicCollisionObjects = [];
@@ -115,6 +118,7 @@
       this.optimizeStaticMeshes();
       this.flushContactShadows();
       this.applyLightingQuality();
+      this.applyWorldDetailQuality();
       this.registerRenderOptimizations();
     }
 
@@ -125,14 +129,19 @@
       if (this.lightingQuality !== nextQuality || previousMobile !== this.performanceProfile.mobile) {
         this.lightingQuality = nextQuality;
         this.applyLightingQuality();
+        this.applyWorldDetailQuality();
+        this.registerRenderOptimizations();
       }
     }
 
     getInitialLightingQuality() {
       try {
-        return localStorage.getItem('controlMode') === 'mobile'
-          ? LIGHTING_QUALITY.MOBILE
-          : LIGHTING_QUALITY.DESKTOP;
+        const storedMode = localStorage.getItem('controlMode');
+        if (storedMode === 'mobile') return LIGHTING_QUALITY.MOBILE;
+        if (storedMode === 'desktop') return LIGHTING_QUALITY.DESKTOP;
+        const coarsePointer = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+        const compactViewport = Math.min(window.innerWidth || 9999, window.innerHeight || 9999) < 820;
+        return coarsePointer && compactViewport ? LIGHTING_QUALITY.MOBILE : LIGHTING_QUALITY.DESKTOP;
       } catch (error) {
         return LIGHTING_QUALITY.DESKTOP;
       }
@@ -1002,6 +1011,293 @@
       this.addInstancedBoxBatch(bollards, materials.facadeTrim, { name: 'intersection-bollards', castShadow: false, receiveShadow: true });
     }
 
+    applyWorldDetailQuality() {
+      if (this.isDesktopLighting()) {
+        this.createDesktopWorldDetailLayer();
+      } else {
+        this.disposeDesktopWorldDetailLayer();
+      }
+    }
+
+    createDesktopWorldDetailLayer() {
+      if (this.desktopWorldDetailGroup) return;
+      this.desktopWorldDetailGroup = new THREE.Group();
+      this.desktopWorldDetailGroup.name = 'desktop-world-detail-layer';
+      this.group.add(this.desktopWorldDetailGroup);
+      const materials = this.getDesktopWorldDetailMaterials();
+
+      this.addDesktopSurfaceVariation(materials);
+      this.addDesktopBuildingDepthDetails(materials);
+      this.addDesktopWindowDepthDetails(materials);
+      this.addDesktopVegetationDetails(materials);
+      this.addDesktopAmbientProps(materials);
+      this.addDesktopDistantSkyline(materials);
+    }
+
+    disposeDesktopWorldDetailLayer() {
+      if (!this.desktopWorldDetailGroup) return;
+      this.desktopWorldDetailGroup.traverse((child) => {
+        if (!child.isMesh && !child.isInstancedMesh) return;
+        if (child.geometry && child.geometry !== this.decorBoxGeometry && child.geometry !== this.decorPlaneGeometry) {
+          child.geometry.dispose();
+        }
+        const materials = Array.isArray(child.material) ? child.material : [child.material];
+        for (const material of materials) {
+          if (material && !material.userData.sharedDesktopWorldDetail) material.dispose();
+        }
+      });
+      if (this.desktopWorldDetailGroup.parent) this.desktopWorldDetailGroup.parent.remove(this.desktopWorldDetailGroup);
+      this.desktopWorldDetailGroup = null;
+
+      if (this.desktopWorldDetailMaterials) {
+        this.desktopWorldDetailMaterials.forEach((material) => material.dispose());
+        this.desktopWorldDetailMaterials = null;
+      }
+      if (this.desktopWorldDetailTextures) {
+        this.desktopWorldDetailTextures.forEach((texture) => texture.dispose());
+        this.desktopWorldDetailTextures = null;
+      }
+    }
+
+    getDesktopWorldDetailMaterials() {
+      if (this.desktopWorldDetailMaterials) return this.desktopWorldDetailMaterials;
+      const normalFine = this.createDesktopDetailNormalTexture('fine');
+      const normalCracked = this.createDesktopDetailNormalTexture('cracked');
+      const normalFabric = this.createDesktopDetailNormalTexture('leaf');
+      const materials = new Map();
+      const add = (key, material) => {
+        material.userData.sharedDesktopWorldDetail = true;
+        materials.set(key, material);
+        return material;
+      };
+
+      add('roadPatch', new THREE.MeshStandardMaterial({ color: 0x20262c, roughness: 0.96, metalness: 0.01, normalMap: normalFine, normalScale: new THREE.Vector2(0.18, 0.18) }));
+      add('dirtDecal', new THREE.MeshBasicMaterial({ color: 0x3d3226, transparent: true, opacity: 0.24, depthWrite: false }));
+      add('crackDecal', new THREE.MeshBasicMaterial({ color: 0x080b0d, transparent: true, opacity: 0.34, depthWrite: false }));
+      add('concreteDecal', new THREE.MeshBasicMaterial({ color: 0x1d2022, transparent: true, opacity: 0.18, depthWrite: false }));
+      add('gravel', new THREE.MeshStandardMaterial({ color: 0x6a6b68, roughness: 0.98, metalness: 0, normalMap: normalCracked, normalScale: new THREE.Vector2(0.12, 0.12) }));
+      add('weedA', new THREE.MeshStandardMaterial({ color: 0x315f36, roughness: 0.95, metalness: 0, normalMap: normalFabric, normalScale: new THREE.Vector2(0.08, 0.08) }));
+      add('weedB', new THREE.MeshStandardMaterial({ color: 0x486d38, roughness: 0.96, metalness: 0, normalMap: normalFabric, normalScale: new THREE.Vector2(0.08, 0.08) }));
+      add('windowGlass', new THREE.MeshStandardMaterial({ color: 0x8fc8ef, roughness: 0.18, metalness: 0.02, transparent: true, opacity: 0.42, envMapIntensity: 0.55, side: THREE.DoubleSide }));
+      add('windowDark', new THREE.MeshBasicMaterial({ color: 0x071017, transparent: true, opacity: 0.58, side: THREE.DoubleSide }));
+      add('windowFrame', new THREE.MeshStandardMaterial({ color: 0x1d252d, roughness: 0.62, metalness: 0.2 }));
+      add('facadeGroove', new THREE.MeshBasicMaterial({ color: 0x10171d, transparent: true, opacity: 0.26 }));
+      add('pipeMetal', new THREE.MeshStandardMaterial({ color: 0x38424a, roughness: 0.52, metalness: 0.5, normalMap: normalFine, normalScale: new THREE.Vector2(0.06, 0.06) }));
+      add('roofDetail', new THREE.MeshStandardMaterial({ color: 0x29323b, roughness: 0.72, metalness: 0.22 }));
+      add('crateDetail', new THREE.MeshStandardMaterial({ color: 0x7b5635, roughness: 0.86, metalness: 0.02, map: this.textures.crate }));
+      add('trafficDetail', new THREE.MeshStandardMaterial({ color: 0xd4c06e, roughness: 0.58, metalness: 0.18 }));
+      add('skyline', new THREE.MeshStandardMaterial({ color: 0x52606b, roughness: 0.92, metalness: 0.02, transparent: true, opacity: 0.46 }));
+      this.desktopWorldDetailMaterials = materials;
+      return materials;
+    }
+
+    createDesktopDetailNormalTexture(kind) {
+      if (!this.desktopWorldDetailTextures) this.desktopWorldDetailTextures = new Map();
+      const key = 'normal-' + kind;
+      if (this.desktopWorldDetailTextures.has(key)) return this.desktopWorldDetailTextures.get(key);
+      const canvas = document.createElement('canvas');
+      canvas.width = 64;
+      canvas.height = 64;
+      const context = canvas.getContext('2d');
+      const image = context.createImageData(64, 64);
+      const seed = kind.length * 97;
+      for (let y = 0; y < 64; y += 1) {
+        for (let x = 0; x < 64; x += 1) {
+          const i = (y * 64 + x) * 4;
+          const wave = kind === 'cracked' ? Math.sin(x * 0.9 + y * 0.3) * 13 : kind === 'leaf' ? Math.sin(y * 1.2) * 10 : Math.sin((x + y) * 0.42) * 7;
+          const grainSeed = Math.sin((x * 12.9898 + y * 78.233 + seed) * 0.18) * 43758.5453;
+          const grain = (grainSeed - Math.floor(grainSeed) - 0.5) * 18;
+          image.data[i] = clamp(128 + wave + grain, 88, 168);
+          image.data[i + 1] = clamp(128 - wave * 0.42 + grain * 0.5, 88, 168);
+          image.data[i + 2] = 226;
+          image.data[i + 3] = 255;
+        }
+      }
+      context.putImageData(image, 0, 0);
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      texture.repeat.set(2, 2);
+      this.desktopWorldDetailTextures.set(key, texture);
+      return texture;
+    }
+
+    addDesktopSurfaceVariation(materials) {
+      const parent = this.desktopWorldDetailGroup;
+      const cracks = [];
+      const stains = [];
+      const concreteMarks = [];
+      const roadPatches = [];
+      const gravel = [];
+      const roadZones = [
+        [2500, 2520, 520, 5000], [2500, 2520, 5000, 520], [1560, 820, 1600, 300], [3820, 3410, 1450, 300]
+      ];
+      for (const zone of roadZones) {
+        for (let i = 0; i < 18; i += 1) {
+          roadPatches.push({ x: zone[0] + randomRange(-zone[2] * 0.45, zone[2] * 0.45), y: 1.48, z: zone[1] + randomRange(-zone[3] * 0.45, zone[3] * 0.45), w: randomRange(38, 112), h: 0.16, d: randomRange(14, 46), rotY: randomRange(0, Math.PI) });
+          cracks.push({ x: zone[0] + randomRange(-zone[2] * 0.48, zone[2] * 0.48), y: 1.72, z: zone[1] + randomRange(-zone[3] * 0.48, zone[3] * 0.48), w: randomRange(70, 190), h: 0.08, d: randomRange(3, 7), rotY: randomRange(0, Math.PI) });
+        }
+      }
+
+      const dirtZones = [[820, 2260], [3930, 1040], [3400, 4350], [2050, 3600], [1100, 1320], [3860, 2180]];
+      for (const zone of dirtZones) {
+        for (let i = 0; i < 16; i += 1) {
+          stains.push({ x: zone[0] + randomRange(-180, 180), y: 1.52, z: zone[1] + randomRange(-150, 150), w: randomRange(44, 140), h: 0.1, d: randomRange(28, 118), rotY: randomRange(0, Math.PI) });
+          gravel.push({ x: zone[0] + randomRange(-170, 170), y: 3.4, z: zone[1] + randomRange(-145, 145), w: randomRange(4, 10), h: randomRange(1.6, 4.6), d: randomRange(4, 12), rotY: randomRange(0, Math.PI) });
+        }
+      }
+
+      for (const building of this.objects) {
+        if (building.type !== 'building' || !building.detailed) continue;
+        concreteMarks.push({ x: building.x + building.w * 0.5, y: 1.62, z: building.y + building.h + 22, w: Math.min(190, building.w * 0.52), h: 0.08, d: 28, rotY: 0 });
+        concreteMarks.push({ x: building.x - 18, y: 1.62, z: building.y + building.h * 0.5, w: 24, h: 0.08, d: Math.min(170, building.h * 0.48), rotY: 0 });
+      }
+
+      this.addInstancedBoxBatch(roadPatches, materials.get('roadPatch'), { name: 'desktop-road-patches', castShadow: false, receiveShadow: true, parent });
+      this.addInstancedGroundPlaneBatch(cracks, materials.get('crackDecal'), { name: 'desktop-road-cracks', parent });
+      this.addInstancedGroundPlaneBatch(stains, materials.get('dirtDecal'), { name: 'desktop-dirt-stains', parent });
+      this.addInstancedGroundPlaneBatch(concreteMarks, materials.get('concreteDecal'), { name: 'desktop-concrete-wear-decals', parent });
+      this.addInstancedBoxBatch(gravel, materials.get('gravel'), { name: 'desktop-gravel-pebbles', castShadow: false, receiveShadow: true, parent });
+    }
+
+    addDesktopBuildingDepthDetails(materials) {
+      const parent = this.desktopWorldDetailGroup;
+      const frames = [];
+      const grooves = [];
+      const pipes = [];
+      const roofEdges = [];
+      const roofSmall = [];
+
+      for (const building of this.objects) {
+        if (building.type !== 'building' || !building.detailed) continue;
+        const floors = building.floors || 2;
+        const floorHeight = 112;
+        const topY = floors * floorHeight + 10;
+        const count = Math.max(2, Math.floor(building.w / 110));
+
+        roofEdges.push({ x: building.x + building.w / 2, y: topY + 14, z: building.y - 12, w: building.w + 42, h: 10, d: 10 });
+        roofEdges.push({ x: building.x + building.w / 2, y: topY + 14, z: building.y + building.h + 12, w: building.w + 42, h: 10, d: 10 });
+        roofEdges.push({ x: building.x - 12, y: topY + 14, z: building.y + building.h / 2, w: 10, h: 10, d: building.h + 42 });
+        roofEdges.push({ x: building.x + building.w + 12, y: topY + 14, z: building.y + building.h / 2, w: 10, h: 10, d: building.h + 42 });
+
+        pipes.push({ x: building.x + building.w + 6, y: topY * 0.52, z: building.y + building.h * 0.24, w: 8, h: topY * 0.8, d: 8 });
+        pipes.push({ x: building.x - 6, y: topY * 0.54, z: building.y + building.h * 0.76, w: 7, h: topY * 0.72, d: 7 });
+        roofSmall.push({ x: building.x + building.w * 0.22, y: topY + 25, z: building.y + building.h * 0.72, w: 42, h: 28, d: 42, rotY: 0.4 });
+        roofSmall.push({ x: building.x + building.w * 0.78, y: topY + 18, z: building.y + building.h * 0.28, w: 28, h: 22, d: 34, rotY: -0.2 });
+
+        for (let floor = 0; floor < floors; floor += 1) {
+          const y = floor * floorHeight + 58;
+          grooves.push({ x: building.x + building.w / 2, y: y - 29, z: building.y - 2.8, w: building.w - 26, h: 4, d: 3 });
+          grooves.push({ x: building.x + building.w / 2, y: y + 31, z: building.y + building.h + 2.8, w: building.w - 26, h: 4, d: 3 });
+          for (let i = 0; i < count; i += 1) {
+            const x = building.x + 58 + i * ((building.w - 116) / Math.max(1, count - 1));
+            frames.push({ x, y: y + 18, z: building.y - 3.2, w: 46, h: 4, d: 5 });
+            frames.push({ x, y: y - 18, z: building.y - 3.2, w: 46, h: 4, d: 5 });
+            frames.push({ x: x - 23, y, z: building.y - 3.2, w: 4, h: 38, d: 5 });
+            frames.push({ x: x + 23, y, z: building.y - 3.2, w: 4, h: 38, d: 5 });
+            frames.push({ x, y: y + 18, z: building.y + building.h + 3.2, w: 46, h: 4, d: 5 });
+            frames.push({ x, y: y - 18, z: building.y + building.h + 3.2, w: 46, h: 4, d: 5 });
+          }
+        }
+      }
+
+      this.addInstancedBoxBatch(frames, materials.get('windowFrame'), { name: 'desktop-window-frames', castShadow: false, receiveShadow: true, parent });
+      this.addInstancedBoxBatch(grooves, materials.get('facadeGroove'), { name: 'desktop-facade-grooves', castShadow: false, receiveShadow: false, parent });
+      this.addInstancedBoxBatch(pipes, materials.get('pipeMetal'), { name: 'desktop-building-pipes', castShadow: true, receiveShadow: true, parent });
+      this.addInstancedBoxBatch(roofEdges, materials.get('roofDetail'), { name: 'desktop-roof-edge-details', castShadow: true, receiveShadow: true, parent });
+      this.addInstancedBoxBatch(roofSmall, materials.get('roofDetail'), { name: 'desktop-roof-small-objects', castShadow: true, receiveShadow: true, parent });
+    }
+
+    addDesktopWindowDepthDetails(materials) {
+      const parent = this.desktopWorldDetailGroup;
+      const glass = [];
+      const darkBacks = [];
+      for (const building of this.objects) {
+        if (building.type !== 'building' || !building.detailed) continue;
+        const floors = building.floors || 2;
+        const count = Math.max(2, Math.floor(building.w / 110));
+        for (let floor = 0; floor < floors; floor += 1) {
+          const y = floor * 112 + 58;
+          for (let i = 0; i < count; i += 1) {
+            const x = building.x + 58 + i * ((building.w - 116) / Math.max(1, count - 1));
+            glass.push({ x, y, z: building.y - 1.9, w: 31, d: 23, rotY: 0 });
+            darkBacks.push({ x, y, z: building.y - 2.6, w: 33, d: 25, rotY: 0 });
+            glass.push({ x, y, z: building.y + building.h + 1.9, w: 31, d: 23, rotY: Math.PI });
+            darkBacks.push({ x, y, z: building.y + building.h + 2.6, w: 33, d: 25, rotY: Math.PI });
+          }
+          glass.push({ x: building.x - 1.9, y, z: building.y + building.h * 0.62, w: 31, d: 23, rotY: Math.PI / 2 });
+          darkBacks.push({ x: building.x - 2.6, y, z: building.y + building.h * 0.62, w: 33, d: 25, rotY: Math.PI / 2 });
+          glass.push({ x: building.x + building.w + 1.9, y, z: building.y + building.h * 0.42, w: 31, d: 23, rotY: -Math.PI / 2 });
+          darkBacks.push({ x: building.x + building.w + 2.6, y, z: building.y + building.h * 0.42, w: 33, d: 25, rotY: -Math.PI / 2 });
+        }
+      }
+      this.addInstancedVerticalPlaneBatch(darkBacks, materials.get('windowDark'), { name: 'desktop-window-interior-depth', parent });
+      this.addInstancedVerticalPlaneBatch(glass, materials.get('windowGlass'), { name: 'desktop-window-glass-sheen', parent });
+    }
+
+    addDesktopVegetationDetails(materials) {
+      const parent = this.desktopWorldDetailGroup;
+      const weedsA = [];
+      const weedsB = [];
+      const treeLowLeaves = [];
+      const clusters = [[420, 2100], [780, 2350], [3860, 820], [4540, 1240], [3220, 4300], [3760, 4300], [1980, 3480], [2180, 3640]];
+      for (const cluster of clusters) {
+        for (let i = 0; i < 18; i += 1) {
+          const angle = i * 2.399 + randomRange(-0.35, 0.35);
+          const distance = randomRange(42, 170);
+          const entry = { x: cluster[0] + Math.cos(angle) * distance, y: randomRange(8, 15), z: cluster[1] + Math.sin(angle) * distance, w: randomRange(6, 14), h: randomRange(14, 34), d: randomRange(5, 11), rotY: angle };
+          (i % 2 ? weedsA : weedsB).push(entry);
+        }
+      }
+      for (const tree of this.objects) {
+        if (tree.type !== 'tree') continue;
+        for (let i = 0; i < 3; i += 1) {
+          const angle = i * 2.1 + randomRange(-0.25, 0.25);
+          treeLowLeaves.push({ x: tree.x + Math.cos(angle) * tree.r * 0.34, y: 76 + i * 7, z: tree.y + Math.sin(angle) * tree.r * 0.34, w: tree.r * randomRange(0.52, 0.82), h: tree.r * randomRange(0.32, 0.48), d: tree.r * randomRange(0.5, 0.8), rotY: angle });
+        }
+      }
+      this.addInstancedBoxBatch(weedsA, materials.get('weedA'), { name: 'desktop-weeds-a', castShadow: false, receiveShadow: true, parent });
+      this.addInstancedBoxBatch(weedsB, materials.get('weedB'), { name: 'desktop-weeds-b', castShadow: false, receiveShadow: true, parent });
+      this.addInstancedBoxBatch(treeLowLeaves, materials.get('weedA'), { name: 'desktop-tree-shape-variation', castShadow: false, receiveShadow: true, parent });
+    }
+
+    addDesktopAmbientProps(materials) {
+      const parent = this.desktopWorldDetailGroup;
+      const crates = [];
+      const signs = [];
+      const utility = [];
+      const propZones = [[1180, 1260], [1820, 1420], [3260, 3020], [3920, 2160], [2360, 2380], [2680, 2640], [860, 860]];
+      for (const zone of propZones) {
+        crates.push({ x: zone[0] + randomRange(-34, 34), y: 13, z: zone[1] + randomRange(-34, 34), w: 30, h: 26, d: 28, rotY: randomRange(0, Math.PI) });
+        crates.push({ x: zone[0] + randomRange(-58, 58), y: 8, z: zone[1] + randomRange(-58, 58), w: 22, h: 16, d: 24, rotY: randomRange(0, Math.PI) });
+        utility.push({ x: zone[0] + randomRange(-75, 75), y: 22, z: zone[1] + randomRange(-75, 75), w: 18, h: 44, d: 16, rotY: randomRange(0, Math.PI) });
+      }
+      for (let z = 2200; z <= 2860; z += 130) {
+        signs.push({ x: 2440, y: 36, z, w: 34, h: 46, d: 3, rotY: Math.PI * 0.5 });
+        signs.push({ x: 2560, y: 36, z, w: 34, h: 46, d: 3, rotY: -Math.PI * 0.5 });
+      }
+      this.addInstancedBoxBatch(crates, materials.get('crateDetail'), { name: 'desktop-noncollision-crate-dressing', castShadow: false, receiveShadow: true, parent });
+      this.addInstancedBoxBatch(signs, materials.get('trafficDetail'), { name: 'desktop-road-sign-panels', castShadow: false, receiveShadow: true, parent });
+      this.addInstancedBoxBatch(utility, materials.get('pipeMetal'), { name: 'desktop-utility-boxes', castShadow: false, receiveShadow: true, parent });
+    }
+
+    addDesktopDistantSkyline(materials) {
+      const parent = this.desktopWorldDetailGroup;
+      const skyline = [];
+      for (let i = 0; i < 34; i += 1) {
+        const x = 120 + i * 145;
+        const h = randomRange(130, 360);
+        skyline.push({ x, y: h * 0.5, z: -420, w: randomRange(70, 130), h, d: randomRange(60, 130), rotY: randomRange(-0.05, 0.05) });
+        skyline.push({ x, y: h * 0.45, z: WORLD.height + 420, w: randomRange(70, 140), h: h * randomRange(0.72, 1.1), d: randomRange(60, 130), rotY: randomRange(-0.05, 0.05) });
+      }
+      for (let i = 0; i < 24; i += 1) {
+        const z = 150 + i * 195;
+        skyline.push({ x: -420, y: randomRange(70, 180), z, w: randomRange(70, 130), h: randomRange(140, 320), d: randomRange(70, 140), rotY: randomRange(-0.05, 0.05) });
+        skyline.push({ x: WORLD.width + 420, y: randomRange(70, 180), z, w: randomRange(70, 130), h: randomRange(140, 320), d: randomRange(70, 140), rotY: randomRange(-0.05, 0.05) });
+      }
+      this.addInstancedBoxBatch(skyline, materials.get('skyline'), { name: 'desktop-distant-skyline', castShadow: false, receiveShadow: false, parent });
+    }
+
     addInstancedBoxBatch(entries, material, options) {
       if (!entries.length) return null;
       const mesh = new THREE.InstancedMesh(this.decorBoxGeometry, material, entries.length);
@@ -1023,7 +1319,8 @@
 
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.computeBoundingSphere) mesh.computeBoundingSphere();
-      this.group.add(mesh);
+      const parent = options && options.parent ? options.parent : this.group;
+      parent.add(mesh);
       return mesh;
     }
 
@@ -1049,7 +1346,35 @@
 
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.computeBoundingSphere) mesh.computeBoundingSphere();
-      this.group.add(mesh);
+      const parent = options && options.parent ? options.parent : this.group;
+      parent.add(mesh);
+      return mesh;
+    }
+
+    addInstancedVerticalPlaneBatch(entries, material, options) {
+      if (!entries.length) return null;
+      const mesh = new THREE.InstancedMesh(this.decorPlaneGeometry, material, entries.length);
+      mesh.name = options && options.name ? options.name : 'visual-vertical-plane-batch';
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      mesh.frustumCulled = true;
+      mesh.matrixAutoUpdate = false;
+      mesh.userData.visualDetail = true;
+
+      for (let i = 0; i < entries.length; i += 1) {
+        const entry = entries[i];
+        this.decorBatchPosition.set(entry.x, entry.y, entry.z);
+        this.decorBatchEuler.set(0, entry.rotY || 0, 0);
+        this.decorBatchQuaternion.setFromEuler(this.decorBatchEuler);
+        this.decorBatchScale.set(entry.w, entry.d, 1);
+        this.decorBatchMatrix.compose(this.decorBatchPosition, this.decorBatchQuaternion, this.decorBatchScale);
+        mesh.setMatrixAt(i, this.decorBatchMatrix);
+      }
+
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.computeBoundingSphere) mesh.computeBoundingSphere();
+      const parent = options && options.parent ? options.parent : this.group;
+      parent.add(mesh);
       return mesh;
     }
 
