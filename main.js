@@ -318,6 +318,17 @@
       return deviceMode.isMobile();
     }
   });
+  window.CanvasArenaDebug = {
+    scene,
+    camera,
+    renderer,
+    world,
+    player,
+    weapons,
+    npcs,
+    modeSystem,
+    performanceManager
+  };
   bindPerformanceSettings();
   bindMobileViewportEvents();
   updateMobileMode();

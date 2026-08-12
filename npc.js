@@ -135,6 +135,11 @@
   ];
   const LEG_INJURY_TIME = 2800;
   const ARM_INJURY_TIME = 3000;
+  const NPC_VISUAL_QUALITY = {
+    MOBILE: 'MOBILE',
+    DESKTOP: 'HIGH'
+  };
+  const DESKTOP_DETAIL_DISTANCE = 880;
 
   class NpcManager {
     constructor(scene, world, player, weapons, audio) {
@@ -172,12 +177,17 @@
         head: new THREE.SphereGeometry(12, 18, 14),
         limb: new THREE.CylinderGeometry(4.5, 5.5, 30, 12)
       };
+      this.geometryCache.head.userData.sharedNpcGeometry = true;
+      this.geometryCache.limb.userData.sharedNpcGeometry = true;
       this.sharedMaterials = {
         suit: new THREE.MeshStandardMaterial({ color: 0x2b3440, roughness: 0.82 }),
         dark: new THREE.MeshStandardMaterial({ color: 0x161b22, roughness: 0.74 }),
         boot: new THREE.MeshStandardMaterial({ color: 0x11161c, roughness: 0.86 }),
         healthBack: new THREE.MeshBasicMaterial({ color: 0x11161c })
       };
+      Object.values(this.sharedMaterials).forEach((material) => {
+        material.userData.sharedNpcMaterial = true;
+      });
       this.grenadeGeometry = new THREE.SphereGeometry(6, 10, 8);
       this.grenadeMaterial = new THREE.MeshStandardMaterial({ color: 0x27313a, roughness: 0.72, metalness: 0.25 });
       this.stats = {
@@ -195,6 +205,10 @@
         activeAiMs: 0,
         visionChecks: 0
       };
+      this.visualQuality = this.getInitialVisualQuality();
+      this.desktopMaterials = null;
+      this.desktopGeometries = null;
+      this.desktopTextures = null;
       this.createGrenadePool();
 
       for (let i = 0; i < NPC.count; i += 1) {
@@ -212,6 +226,56 @@
 
     setPerformanceProfile(profile) {
       this.performanceProfile = Object.assign({}, this.performanceProfile, profile || {});
+      const nextQuality = this.performanceProfile.mobile ? NPC_VISUAL_QUALITY.MOBILE : NPC_VISUAL_QUALITY.DESKTOP;
+      if (nextQuality !== this.visualQuality) {
+        this.setVisualQuality(nextQuality);
+      }
+    }
+
+    getInitialVisualQuality() {
+      try {
+        return localStorage.getItem('controlMode') === 'mobile'
+          ? NPC_VISUAL_QUALITY.MOBILE
+          : NPC_VISUAL_QUALITY.DESKTOP;
+      } catch (error) {
+        return NPC_VISUAL_QUALITY.DESKTOP;
+      }
+    }
+
+    setVisualQuality(quality) {
+      const nextQuality = quality === NPC_VISUAL_QUALITY.MOBILE
+        ? NPC_VISUAL_QUALITY.MOBILE
+        : NPC_VISUAL_QUALITY.DESKTOP;
+      if (this.visualQuality === nextQuality) return;
+      this.visualQuality = nextQuality;
+
+      for (const npc of this.npcs) {
+        if (!npc || !npc.group) continue;
+        const oldGroup = npc.group;
+        const wasVisible = oldGroup.visible;
+        this.scene.remove(oldGroup);
+        this.disposeNpcGroup(oldGroup);
+        npc.group = this.buildNpcMesh(npc.id, npc.roleKey);
+        npc.group.visible = wasVisible;
+        this.scene.add(npc.group);
+        this.assignRole(npc, npc.roleKey);
+        this.resetRenderState(npc);
+        this.syncMesh(npc, 0, true);
+      }
+    }
+
+    disposeNpcGroup(group) {
+      const disposedMaterials = new Set();
+      group.traverse((child) => {
+        if (!child.isMesh) return;
+        if (child.geometry && !child.geometry.userData.sharedNpcGeometry) {
+          child.geometry.dispose();
+        }
+        if (child.material && !child.material.userData.sharedNpcMaterial && !disposedMaterials.has(child.material)) {
+          disposedMaterials.add(child.material);
+          child.material.dispose();
+        }
+      });
     }
 
     consumePerformanceStats() {
@@ -384,7 +448,7 @@
         alive: true,
         deadAt: 0,
         respawnAt: 0,
-        group: this.buildNpcMesh()
+        group: this.buildNpcMesh(id, this.getRoleKey(id))
       };
 
       this.initializeAiState(npc, performance.now());
@@ -521,7 +585,14 @@
       return this.npcs.filter((npc) => npc.alive).length;
     }
 
-    buildNpcMesh() {
+    buildNpcMesh(id, roleKey) {
+      if (this.visualQuality === NPC_VISUAL_QUALITY.MOBILE) {
+        return this.buildMobileNpcMesh();
+      }
+      return this.buildDesktopNpcMesh(id || 0, roleKey || this.getRoleKey(id || 0));
+    }
+
+    buildMobileNpcMesh() {
       const group = new THREE.Group();
       const bodyMaterial = new THREE.MeshStandardMaterial({ color: NPC.color, roughness: 0.78 });
       const headMaterial = new THREE.MeshStandardMaterial({ color: 0xd8a27d, roughness: 0.68 });
@@ -570,8 +641,363 @@
       group.userData.visor = visor;
       group.userData.bodyMaterial = bodyMaterial;
       group.userData.headMaterial = headMaterial;
+      bodyMaterial.userData.baseColor = NPC.color;
+      headMaterial.userData.baseColor = 0xd8a27d;
+      group.userData.animBase = {
+        torsoY: 42,
+        headY: 76,
+        neckY: 63,
+        visorY: 78,
+        armY: 43,
+        legY: 13,
+        weaponY: 43,
+        weaponZ: 18,
+        barrelY: 43,
+        barrelZ: 34
+      };
 
       return group;
+    }
+
+    buildDesktopNpcMesh(id, roleKey) {
+      const group = new THREE.Group();
+      group.userData.visualQuality = NPC_VISUAL_QUALITY.DESKTOP;
+
+      const variant = this.getDesktopNpcVariant(id, roleKey);
+      const materials = this.getDesktopNpcMaterials(variant);
+      const detailParts = [];
+      const lowDetailParts = [];
+
+      const pelvis = this.addBox(group, 'pelvis', { x: 22, y: 12, z: 13 }, { x: 0, y: 30, z: 0 }, materials.pants);
+      const waist = this.addBox(group, 'waist', { x: 20, y: 8, z: 12 }, { x: 0, y: 37, z: 0 }, materials.shirt);
+      const torso = this.addBox(group, 'torso', { x: 27, y: 30, z: 15 }, { x: 0, y: 50, z: 0 }, materials.shirt);
+      const chest = this.addBox(group, 'chestPlate', { x: 29, y: 19, z: 16.5 }, { x: 0, y: 53, z: 2 }, materials.vest);
+      const collar = this.addBox(group, 'collar', { x: 22, y: 4, z: 16 }, { x: 0, y: 67, z: 0.5 }, materials.clothDark);
+      const neck = this.addCylinder(group, 'neck', 4.2, 4.8, 8, { x: 0, y: 70, z: 0 }, materials.skin);
+      const head = new THREE.Mesh(this.getDesktopGeometry('head'), materials.skin);
+      head.name = 'head';
+      head.position.set(0, 82, 0);
+      head.scale.set(0.92 + variant.faceWidth * 0.08, 1.08 + variant.faceLength * 0.05, 0.86);
+      head.castShadow = true;
+      head.receiveShadow = true;
+      group.add(head);
+
+      const jaw = this.addBox(head, 'jaw', { x: 12, y: 6, z: 9 }, { x: 0, y: -8.5, z: 2 }, materials.skin);
+      const nose = this.addBox(head, 'nose', { x: 4, y: 7, z: 5 }, { x: variant.asymmetry, y: 0, z: 10 }, materials.skin);
+      const brow = this.addBox(head, 'brow', { x: 15, y: 2.4, z: 2 }, { x: 0, y: 4.2, z: 9.7 }, materials.brow);
+      const mouth = this.addBox(head, 'mouth', { x: 9, y: 1.5, z: 1.2 }, { x: -variant.asymmetry * 0.4, y: -5.5, z: 10.8 }, materials.mouth);
+      const leftEar = this.addSphere(head, 'leftEar', 2.6, { x: -10.3, y: 0.4, z: -0.5 }, materials.skin, { x: 0.65, y: 1.08, z: 0.34 }, 10, 8);
+      const rightEar = this.addSphere(head, 'rightEar', 2.6, { x: 10.3, y: -0.2, z: -0.4 }, materials.skin, { x: 0.65, y: 1.08, z: 0.34 }, 10, 8);
+      const leftEye = this.addSphere(head, 'leftEye', 1.75, { x: -4.4, y: 1.8, z: 10.7 }, materials.eyeWhite, { x: 1, y: 0.68, z: 0.38 }, 10, 8);
+      const rightEye = this.addSphere(head, 'rightEye', 1.75, { x: 4.4, y: 1.6, z: 10.7 }, materials.eyeWhite, { x: 1, y: 0.68, z: 0.38 }, 10, 8);
+      const leftIris = this.addSphere(head, 'leftIris', 0.75, { x: -4.4, y: 1.75, z: 11.45 }, materials.iris, { x: 1, y: 1, z: 0.18 }, 8, 6);
+      const rightIris = this.addSphere(head, 'rightIris', 0.75, { x: 4.4, y: 1.55, z: 11.45 }, materials.iris, { x: 1, y: 1, z: 0.18 }, 8, 6);
+      detailParts.push(jaw, nose, brow, mouth, leftEar, rightEar, leftEye, rightEye, leftIris, rightIris);
+      lowDetailParts.push(leftIris, rightIris, leftEye, rightEye, mouth, brow);
+
+      const hair = this.addHeadVariant(head, variant, materials, detailParts, lowDetailParts);
+
+      const belt = this.addBox(group, 'belt', { x: 26, y: 4, z: 15 }, { x: 0, y: 34, z: 0 }, materials.leather);
+      const buckle = this.addBox(group, 'buckle', { x: 5, y: 4.5, z: 2 }, { x: 0, y: 34, z: 8.4 }, materials.metal);
+      const leftPocket = this.addBox(group, 'leftPocket', { x: 7, y: 8, z: 1.6 }, { x: -8, y: 49, z: 10 }, materials.vestDark);
+      const rightPocket = this.addBox(group, 'rightPocket', { x: 7, y: 8, z: 1.6 }, { x: 8, y: 49, z: 10 }, materials.vestDark);
+      const shoulderLeft = this.addBox(group, 'leftShoulderPad', { x: 9, y: 5, z: 14 }, { x: -18, y: 63, z: 0 }, materials.shirt);
+      const shoulderRight = this.addBox(group, 'rightShoulderPad', { x: 9, y: 5, z: 14 }, { x: 18, y: 63, z: 0 }, materials.shirt);
+      detailParts.push(chest, collar, belt, buckle, leftPocket, rightPocket, shoulderLeft, shoulderRight);
+      lowDetailParts.push(leftPocket, rightPocket, buckle);
+
+      const leftArm = this.addDesktopArm(group, 'leftArm', -20, materials);
+      const rightArm = this.addDesktopArm(group, 'rightArm', 20, materials);
+      const leftLeg = this.addDesktopLeg(group, 'leftLeg', -8, materials);
+      const rightLeg = this.addDesktopLeg(group, 'rightLeg', 8, materials);
+      const weaponSet = this.addDesktopWeapon(group, roleKey, materials);
+      detailParts.push(...leftArm.userData.details, ...rightArm.userData.details, ...leftLeg.userData.details, ...rightLeg.userData.details, ...weaponSet.details);
+      lowDetailParts.push(...leftArm.userData.lowDetail, ...rightArm.userData.lowDetail, ...weaponSet.lowDetail);
+
+      const healthBack = this.addBox(group, 'healthBack', { x: 48, y: 5, z: 3 }, { x: 0, y: 105, z: 0 }, this.sharedMaterials.healthBack);
+      const healthFill = this.addBox(group, 'healthFill', { x: 46, y: 4, z: 3.2 }, { x: 0, y: 105, z: -0.2 }, new THREE.MeshBasicMaterial({ color: 0x42d59b }));
+
+      group.userData.head = head;
+      group.userData.neck = neck;
+      group.userData.torso = torso;
+      group.userData.leftArm = leftArm;
+      group.userData.rightArm = rightArm;
+      group.userData.leftLeg = leftLeg;
+      group.userData.rightLeg = rightLeg;
+      group.userData.weapon = weaponSet.weapon;
+      group.userData.barrel = weaponSet.barrel;
+      group.userData.visor = brow;
+      group.userData.healthBack = healthBack;
+      group.userData.healthFill = healthFill;
+      group.userData.bodyMaterial = materials.shirt;
+      group.userData.headMaterial = materials.skin;
+      group.userData.desktopParts = {
+        pelvis,
+        waist,
+        chest,
+        collar,
+        hair,
+        jaw,
+        nose,
+        mouth,
+        shoulderLeft,
+        shoulderRight,
+        leftHand: leftArm.userData.hand,
+        rightHand: rightArm.userData.hand,
+        leftFoot: leftLeg.userData.foot,
+        rightFoot: rightLeg.userData.foot,
+        weaponSet
+      };
+      group.userData.desktopDetailParts = detailParts;
+      group.userData.desktopLowDetailParts = lowDetailParts;
+      group.userData.animBase = {
+        torsoY: 50,
+        headY: 82,
+        neckY: 70,
+        visorY: null,
+        armY: 57,
+        legY: 30,
+        weaponY: 47,
+        weaponZ: 17,
+        barrelY: null,
+        barrelZ: null
+      };
+
+      return group;
+    }
+
+    getDesktopNpcVariant(id, roleKey) {
+      const seed = Math.sin((id + 1) * 91.17) * 43758.5453;
+      const n = (offset) => {
+        const value = Math.sin(seed + offset * 19.37) * 10000;
+        return value - Math.floor(value);
+      };
+      const skinPalette = [0xd2a07b, 0xb98262, 0xe0b08b, 0x9d6a52, 0xc28b70];
+      const shirtPalette = roleKey === 'sniper'
+        ? [0x314556, 0x263845, 0x445247]
+        : roleKey === 'heavy'
+          ? [0x403b38, 0x4a3940, 0x343d46]
+          : [0x2f4658, 0x3d4b3f, 0x493d45, 0x42515b, 0x365044];
+      const pantsPalette = [0x202832, 0x25291f, 0x302c26, 0x1e2730];
+      const hairPalette = [0x15100c, 0x322015, 0x6b4a2f, 0x0d0d0c];
+      const headwearRoll = n(1);
+      return {
+        skin: skinPalette[Math.floor(n(2) * skinPalette.length)],
+        shirt: shirtPalette[Math.floor(n(3) * shirtPalette.length)],
+        pants: pantsPalette[Math.floor(n(4) * pantsPalette.length)],
+        hair: hairPalette[Math.floor(n(5) * hairPalette.length)],
+        iris: n(6) < 0.55 ? 0x5b7f67 : n(6) < 0.78 ? 0x6c86a3 : 0x5a4636,
+        headwear: roleKey === 'heavy' ? 'helmet' : roleKey === 'commander' ? 'cap' : headwearRoll < 0.28 ? 'shortHair' : headwearRoll < 0.52 ? 'buzz' : headwearRoll < 0.75 ? 'cap' : 'helmet',
+        vest: roleKey === 'assault' || roleKey === 'heavy' || roleKey === 'commander',
+        faceWidth: n(7) - 0.5,
+        faceLength: n(8) - 0.5,
+        asymmetry: (n(9) - 0.5) * 0.9
+      };
+    }
+
+    markSharedResource(resource) {
+      if (resource && resource.userData) {
+        if (resource.isMaterial) resource.userData.sharedNpcMaterial = true;
+        else resource.userData.sharedNpcGeometry = true;
+      }
+      return resource;
+    }
+
+    getDesktopNpcMaterials(variant) {
+      const make = (options) => {
+        const material = new THREE.MeshStandardMaterial(options);
+        material.userData.sharedNpcMaterial = false;
+        material.userData.baseColor = options.color;
+        return material;
+      };
+      return {
+        skin: make({ color: variant.skin, roughness: 0.74, metalness: 0.02, normalMap: this.getDesktopNormalMap('skin'), normalScale: new THREE.Vector2(0.12, 0.12) }),
+        shirt: make({ color: variant.shirt, roughness: 0.92, metalness: 0.01, normalMap: this.getDesktopNormalMap('cloth'), normalScale: new THREE.Vector2(0.18, 0.18) }),
+        clothDark: make({ color: 0x141a20, roughness: 0.94, metalness: 0.02, normalMap: this.getDesktopNormalMap('cloth'), normalScale: new THREE.Vector2(0.14, 0.14) }),
+        vest: make({ color: variant.vest ? 0x1b242b : variant.shirt, roughness: 0.88, metalness: 0.04, normalMap: this.getDesktopNormalMap('tacticalCloth'), normalScale: new THREE.Vector2(0.2, 0.2) }),
+        vestDark: make({ color: 0x10161c, roughness: 0.9, metalness: 0.03, normalMap: this.getDesktopNormalMap('tacticalCloth'), normalScale: new THREE.Vector2(0.16, 0.16) }),
+        pants: make({ color: variant.pants, roughness: 0.9, metalness: 0.02, normalMap: this.getDesktopNormalMap('cloth'), normalScale: new THREE.Vector2(0.15, 0.15) }),
+        leather: this.getSharedDesktopMaterial('leather', { color: 0x15100d, roughness: 0.62, metalness: 0.05, normalMap: this.getDesktopNormalMap('leather'), normalScale: new THREE.Vector2(0.1, 0.1) }),
+        boot: this.getSharedDesktopMaterial('boot', { color: 0x0b0d10, roughness: 0.74, metalness: 0.04, normalMap: this.getDesktopNormalMap('rubber'), normalScale: new THREE.Vector2(0.12, 0.12) }),
+        glove: this.getSharedDesktopMaterial('glove', { color: 0x0e1216, roughness: 0.78, metalness: 0.08, normalMap: this.getDesktopNormalMap('rubber'), normalScale: new THREE.Vector2(0.1, 0.1) }),
+        metal: this.getSharedDesktopMaterial('metal', { color: 0x242c34, roughness: 0.36, metalness: 0.72 }),
+        weaponDark: this.getSharedDesktopMaterial('weaponDark', { color: 0x0b1015, roughness: 0.46, metalness: 0.58 }),
+        rubber: this.getSharedDesktopMaterial('rubber', { color: 0x0a0d10, roughness: 0.83, metalness: 0.01 }),
+        eyeWhite: this.getSharedDesktopMaterial('eyeWhite', { color: 0xd6dad6, roughness: 0.42, metalness: 0.02 }),
+        iris: make({ color: variant.iris, roughness: 0.38, metalness: 0.02 }),
+        brow: make({ color: variant.hair, roughness: 0.86, metalness: 0.01 }),
+        hair: make({ color: variant.hair, roughness: 0.88, metalness: 0.01 }),
+        mouth: this.getSharedDesktopMaterial('mouth', { color: 0x51312e, roughness: 0.82, metalness: 0.01 })
+      };
+    }
+
+    getSharedDesktopMaterial(key, options) {
+      if (!this.desktopMaterials) this.desktopMaterials = new Map();
+      if (!this.desktopMaterials.has(key)) {
+        const material = new THREE.MeshStandardMaterial(options);
+        material.userData.sharedNpcMaterial = true;
+        this.desktopMaterials.set(key, material);
+      }
+      return this.desktopMaterials.get(key);
+    }
+
+    getDesktopNormalMap(key) {
+      if (!this.desktopTextures) this.desktopTextures = new Map();
+      if (this.desktopTextures.has(key)) return this.desktopTextures.get(key);
+
+      const canvas = document.createElement('canvas');
+      canvas.width = 64;
+      canvas.height = 64;
+      const context = canvas.getContext('2d');
+      const image = context.createImageData(canvas.width, canvas.height);
+      const seed = key.length * 97;
+      for (let y = 0; y < canvas.height; y += 1) {
+        for (let x = 0; x < canvas.width; x += 1) {
+          const index = (y * canvas.width + x) * 4;
+          const wave = key === 'cloth'
+            ? Math.sin(x * 0.72) * 9 + Math.sin(y * 0.44) * 6
+            : key === 'tacticalCloth'
+              ? Math.sin((x + y) * 0.34) * 8 + Math.sin(x * 1.1) * 5
+              : Math.sin((x * 3.1 + y * 1.7 + seed) * 0.2) * 8;
+          const noise = Math.sin((x * 12.9898 + y * 78.233 + seed) * 0.37) * 43758.5453;
+          const grain = (noise - Math.floor(noise) - 0.5) * 12;
+          image.data[index] = clamp(128 + wave + grain, 94, 162);
+          image.data[index + 1] = clamp(128 - wave * 0.45 + grain, 94, 162);
+          image.data[index + 2] = 224;
+          image.data[index + 3] = 255;
+        }
+      }
+      context.putImageData(image, 0, 0);
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      texture.repeat.set(2, 2);
+      texture.userData.sharedNpcTexture = true;
+      this.desktopTextures.set(key, texture);
+      return texture;
+    }
+
+    getDesktopGeometry(key) {
+      if (!this.desktopGeometries) this.desktopGeometries = new Map();
+      if (this.desktopGeometries.has(key)) return this.desktopGeometries.get(key);
+      let geometry;
+      if (key === 'head') geometry = new THREE.SphereGeometry(10.5, 24, 18);
+      else if (key === 'joint') geometry = new THREE.SphereGeometry(4.8, 12, 8);
+      else if (key === 'hand') geometry = new THREE.SphereGeometry(4.8, 12, 8);
+      else if (key === 'eye') geometry = new THREE.SphereGeometry(1, 8, 6);
+      else geometry = new THREE.SphereGeometry(4, 10, 8);
+      geometry.userData.sharedNpcGeometry = true;
+      this.desktopGeometries.set(key, geometry);
+      return geometry;
+    }
+
+    addSphere(parent, name, radius, position, material, scale, widthSegments, heightSegments) {
+      const geometry = widthSegments || heightSegments
+        ? new THREE.SphereGeometry(radius, widthSegments || 12, heightSegments || 8)
+        : this.getDesktopGeometry(name === 'hand' ? 'hand' : 'joint');
+      geometry.userData.sharedNpcGeometry = Boolean(widthSegments || heightSegments) ? false : true;
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.name = name;
+      mesh.position.set(position.x, position.y, position.z);
+      if (scale) mesh.scale.set(scale.x || 1, scale.y || 1, scale.z || 1);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    }
+
+    addHeadVariant(head, variant, materials, detailParts, lowDetailParts) {
+      let main = null;
+      if (variant.headwear === 'helmet') {
+        main = this.addSphere(head, 'helmet', 10.8, { x: 0, y: 4, z: -1.2 }, materials.weaponDark, { x: 1.06, y: 0.66, z: 0.95 }, 18, 10);
+        const rim = this.addBox(head, 'helmetRim', { x: 20, y: 2.8, z: 15 }, { x: 0, y: 1.5, z: 0.2 }, materials.weaponDark);
+        detailParts.push(main, rim);
+        lowDetailParts.push(rim);
+      } else if (variant.headwear === 'cap') {
+        main = this.addSphere(head, 'cap', 10.1, { x: 0, y: 5, z: -0.8 }, materials.hair, { x: 1.04, y: 0.48, z: 0.92 }, 16, 8);
+        const bill = this.addBox(head, 'capBill', { x: 13, y: 1.8, z: 8 }, { x: 0, y: 3.3, z: 10 }, materials.hair);
+        bill.rotation.x = -0.22;
+        detailParts.push(main, bill);
+        lowDetailParts.push(bill);
+      } else if (variant.headwear === 'buzz') {
+        main = this.addSphere(head, 'buzzCut', 10.2, { x: 0, y: 4.2, z: -1.5 }, materials.hair, { x: 1.02, y: 0.34, z: 0.9 }, 14, 7);
+        detailParts.push(main);
+      } else {
+        main = this.addSphere(head, 'shortHair', 10.6, { x: 0, y: 5.5, z: -1.8 }, materials.hair, { x: 1.02, y: 0.52, z: 0.9 }, 16, 8);
+        const fringe = this.addBox(head, 'hairFringe', { x: 13, y: 3, z: 4 }, { x: -1.2, y: 3.4, z: 8.7 }, materials.hair);
+        fringe.rotation.x = -0.18;
+        detailParts.push(main, fringe);
+        lowDetailParts.push(fringe);
+      }
+      return main;
+    }
+
+    addDesktopArm(parent, name, side, materials) {
+      const arm = new THREE.Group();
+      arm.name = name;
+      arm.position.set(side, 57, 0);
+      const sideSign = side < 0 ? -1 : 1;
+      const upper = this.addCylinder(arm, name + 'Upper', 4.2, 4.8, 20, { x: 0, y: -8, z: 1 }, materials.shirt);
+      upper.rotation.z = sideSign * 0.13;
+      const elbow = this.addSphere(arm, name + 'Elbow', 3.7, { x: sideSign * 1.5, y: -19, z: 1.5 }, materials.shirt, { x: 1, y: 0.82, z: 1 }, 10, 8);
+      const forearm = this.addCylinder(arm, name + 'Forearm', 3.4, 4.1, 20, { x: sideSign * 2.5, y: -29, z: 4 }, materials.shirt);
+      forearm.rotation.x = sideSign > 0 ? -0.16 : -0.08;
+      forearm.rotation.z = -sideSign * 0.08;
+      const wrist = this.addCylinder(arm, name + 'Wrist', 2.5, 2.8, 4, { x: sideSign * 3.4, y: -40, z: 7 }, materials.glove);
+      const hand = this.addSphere(arm, 'hand', 4.5, { x: sideSign * 3.8, y: -43, z: 9 }, materials.glove, { x: 0.9, y: 0.68, z: 1.25 }, 12, 8);
+      hand.rotation.x = -0.42;
+      const fingers = this.addBox(arm, name + 'Fingers', { x: 5.4, y: 2, z: 4.2 }, { x: sideSign * 3.8, y: -45, z: 12 }, materials.glove);
+      fingers.rotation.x = -0.34;
+      arm.userData.hand = hand;
+      arm.userData.details = [upper, elbow, forearm, wrist, hand, fingers];
+      arm.userData.lowDetail = [wrist, fingers];
+      parent.add(arm);
+      return arm;
+    }
+
+    addDesktopLeg(parent, name, side, materials) {
+      const leg = new THREE.Group();
+      leg.name = name;
+      leg.position.set(side, 30, 0);
+      const thigh = this.addCylinder(leg, name + 'Thigh', 5.2, 4.7, 24, { x: 0, y: -10, z: 0 }, materials.pants);
+      const knee = this.addSphere(leg, name + 'Knee', 4.2, { x: 0, y: -23, z: 1.5 }, materials.pants, { x: 0.95, y: 0.75, z: 0.95 }, 10, 8);
+      const shin = this.addCylinder(leg, name + 'Shin', 4.3, 3.8, 25, { x: 0, y: -36, z: 0.5 }, materials.pants);
+      const boot = this.addBox(leg, name + 'Boot', { x: 8.5, y: 6, z: 15 }, { x: 0, y: -51, z: 4.2 }, materials.boot);
+      boot.rotation.x = -0.08;
+      const sole = this.addBox(leg, name + 'Sole', { x: 9, y: 2.2, z: 16 }, { x: 0, y: -54.3, z: 4.8 }, materials.rubber);
+      leg.userData.foot = boot;
+      leg.userData.details = [thigh, knee, shin, boot, sole];
+      leg.userData.lowDetail = [sole];
+      parent.add(leg);
+      return leg;
+    }
+
+    addDesktopWeapon(parent, roleKey, materials) {
+      const group = new THREE.Group();
+      group.name = 'weaponRig';
+      const rifle = roleKey !== 'sniper' && roleKey !== 'commander';
+      group.position.set(0, 47, 17);
+      const receiver = this.addBox(group, 'weapon', rifle ? { x: 8, y: 7, z: 30 } : { x: 7, y: 6, z: 22 }, { x: 0, y: 0, z: 0 }, materials.weaponDark);
+      const barrel = this.addCylinder(group, 'barrel', rifle ? 1.8 : 1.6, rifle ? 1.8 : 1.6, rifle ? 28 : 18, { x: 0, y: 1, z: rifle ? 27 : 22 }, materials.metal);
+      barrel.rotation.x = Math.PI / 2;
+      const muzzle = this.addCylinder(group, 'muzzle', rifle ? 2.4 : 2, rifle ? 2.4 : 2, 5, { x: 0, y: 1, z: rifle ? 43 : 33 }, materials.metal);
+      muzzle.rotation.x = Math.PI / 2;
+      const grip = this.addBox(group, 'weaponGrip', { x: 5, y: 11, z: 5 }, { x: 0, y: -8, z: -7 }, materials.rubber);
+      grip.rotation.x = 0.28;
+      const magazine = this.addBox(group, 'weaponMagazine', rifle ? { x: 6, y: 16, z: 7 } : { x: 5, y: 12, z: 5 }, { x: 0, y: -11, z: rifle ? 4 : -2 }, materials.metal);
+      magazine.rotation.x = rifle ? -0.12 : 0.04;
+      const sight = this.addBox(group, 'weaponSight', { x: 5, y: 3, z: 8 }, { x: 0, y: 6, z: 7 }, materials.metal);
+      const trigger = this.addBox(group, 'triggerGuard', { x: 5, y: 4, z: 2 }, { x: 0, y: -5, z: -1 }, materials.metal);
+      const details = [receiver, barrel, muzzle, grip, magazine, sight, trigger];
+      const lowDetail = [sight, trigger, muzzle];
+      if (rifle) {
+        const stock = this.addBox(group, 'weaponStock', { x: 7, y: 7, z: 18 }, { x: 0, y: 0, z: -22 }, materials.rubber);
+        const handguard = this.addBox(group, 'weaponHandguard', { x: 9, y: 6, z: 16 }, { x: 0, y: 0, z: 18 }, materials.metal);
+        details.push(stock, handguard);
+        lowDetail.push(handguard);
+      }
+      parent.add(group);
+      return { rig: group, weapon: group, barrel, details, lowDetail };
     }
 
     addBox(parent, name, size, position, material) {
@@ -609,6 +1035,7 @@
       let geometry = this.geometryCache.boxes.get(key);
       if (!geometry) {
         geometry = new THREE.BoxGeometry(size.x, size.y, size.z);
+        geometry.userData.sharedNpcGeometry = true;
         this.geometryCache.boxes.set(key, geometry);
       }
       return geometry;
@@ -619,6 +1046,7 @@
       let geometry = this.geometryCache.cylinders.get(key);
       if (!geometry) {
         geometry = new THREE.CylinderGeometry(radiusTop, radiusBottom, height, segments);
+        geometry.userData.sharedNpcGeometry = true;
         this.geometryCache.cylinders.set(key, geometry);
       }
       return geometry;
@@ -2034,6 +2462,13 @@
           child.visible = !enabled;
         }
       });
+
+      const lowDetailParts = npc.group.userData.desktopLowDetailParts;
+      if (lowDetailParts) {
+        for (const part of lowDetailParts) {
+          if (part) part.visible = !enabled;
+        }
+      }
     }
 
     resetRenderState(npc) {
@@ -2083,9 +2518,14 @@
       npc.group.rotation.z = 0;
 
       const bodyColor = npc.hitFlash > 0 ? 0xffffff : (npc.seesPlayer ? NPC.alertColor : ((npc.role && npc.role.color) || NPC.color));
-      const headColor = npc.hitFlash > 0 ? 0xffffff : 0xd8a27d;
+      const headColor = npc.hitFlash > 0 ? 0xffffff : (npc.group.userData.headMaterial.userData.baseColor || 0xd8a27d);
       npc.group.userData.bodyMaterial.color.setHex(bodyColor);
       npc.group.userData.headMaterial.color.setHex(headColor);
+
+      if (npc.group.userData.visualQuality === NPC_VISUAL_QUALITY.DESKTOP) {
+        const distanceToPlayer = Math.hypot(this.player.x - npc.x, this.player.z - npc.z);
+        this.setNpcLowDetail(npc, distanceToPlayer > DESKTOP_DETAIL_DISTANCE && !npc.seesPlayer);
+      }
 
       this.updateLookPose(npc);
       this.animateBody(npc);
@@ -2121,23 +2561,27 @@
       const now = performance.now();
       const gesturing = npc.commandGestureUntil && now < npc.commandGestureUntil;
       const dodging = npc.dodgeUntil && now < npc.dodgeUntil;
+      const desktop = npc.group.userData.visualQuality === NPC_VISUAL_QUALITY.DESKTOP;
+      const base = npc.group.userData.animBase || {};
 
-      parts.torso.position.y = 42 + idle;
+      parts.torso.position.y = (base.torsoY || 42) + idle;
       parts.torso.rotation.x = -hurt * 0.22;
       parts.torso.rotation.y = npc.torsoYaw || 0;
       parts.torso.rotation.z = balance;
-      parts.head.position.y = 76 + idle + hurt * 2.5;
+      parts.head.position.y = (base.headY || 76) + idle + hurt * 2.5;
       parts.head.rotation.x = hurt * 0.18;
       parts.head.rotation.y = npc.headYaw || 0;
-      parts.neck.position.y = 63 + idle;
-      parts.visor.position.y = 78 + idle;
-      parts.visor.rotation.x = hurt * 0.18;
-      parts.visor.rotation.y = npc.headYaw || 0;
+      parts.neck.position.y = (base.neckY || 63) + idle;
+      if (!desktop && parts.visor) {
+        parts.visor.position.y = (base.visorY || 78) + idle;
+        parts.visor.rotation.x = hurt * 0.18;
+        parts.visor.rotation.y = npc.headYaw || 0;
+      }
 
       parts.leftLeg.rotation.x = swing;
       parts.rightLeg.rotation.x = -swing;
-      parts.leftLeg.position.y = 13 + Math.max(0, -swing) * 2;
-      parts.rightLeg.position.y = 13 + Math.max(0, swing) * 2;
+      parts.leftLeg.position.y = (base.legY || 13) + Math.max(0, -swing) * 2;
+      parts.rightLeg.position.y = (base.legY || 13) + Math.max(0, swing) * 2;
 
       if (limping && npc.isMoving) {
         const injuredLeft = npc.limpSide === 'leftLeg';
@@ -2148,16 +2592,16 @@
 
       if (npc.seesPlayer) {
         const recoil = (npc.aimKick || 0) * 0.32;
-        parts.leftArm.rotation.x = -0.72 - recoil;
-        parts.rightArm.rotation.x = -0.72 - recoil;
-        parts.leftArm.rotation.z = 0.38;
-        parts.rightArm.rotation.z = -0.38;
+        parts.leftArm.rotation.x = desktop ? -0.92 - recoil : -0.72 - recoil;
+        parts.rightArm.rotation.x = desktop ? -0.96 - recoil : -0.72 - recoil;
+        parts.leftArm.rotation.z = desktop ? 0.48 : 0.38;
+        parts.rightArm.rotation.z = desktop ? -0.48 : -0.38;
         parts.weapon.visible = true;
         parts.barrel.visible = true;
       } else if (npc.state === 'search') {
         const scan = Math.sin(phase * 0.72) * 0.18;
-        parts.leftArm.rotation.x = -0.18 + scan;
-        parts.rightArm.rotation.x = 0.18 - scan;
+        parts.leftArm.rotation.x = (desktop ? -0.32 : -0.18) + scan;
+        parts.rightArm.rotation.x = (desktop ? -0.18 : 0.18) - scan;
         parts.leftArm.rotation.z = 0.34;
         parts.rightArm.rotation.z = -0.34;
         parts.weapon.visible = true;
@@ -2171,8 +2615,8 @@
         parts.barrel.visible = true;
       }
 
-      parts.leftArm.position.y = 43 + idle;
-      parts.rightArm.position.y = 43 + idle;
+      parts.leftArm.position.y = (base.armY || 43) + idle;
+      parts.rightArm.position.y = (base.armY || 43) + idle;
       parts.leftArm.rotation.y = hurt * 0.28;
       parts.rightArm.rotation.y = -hurt * 0.28;
 
@@ -2194,11 +2638,47 @@
         this.applyHurtPose(npc, parts, hurt);
       }
 
-      parts.weapon.position.y = 43 + idle;
-      parts.weapon.position.z = 18 - (npc.aimKick || 0) * 4;
+      parts.weapon.position.y = (base.weaponY || 43) + idle;
+      parts.weapon.position.z = (base.weaponZ || 18) - (npc.aimKick || 0) * 4;
       parts.weapon.rotation.x = -(npc.aimKick || 0) * 0.12;
-      parts.barrel.position.y = 43 + idle;
-      parts.barrel.position.z = 34 - (npc.aimKick || 0) * 5;
+      if (!desktop) {
+        parts.barrel.position.y = (base.barrelY || 43) + idle;
+        parts.barrel.position.z = (base.barrelZ || 34) - (npc.aimKick || 0) * 5;
+      }
+      if (desktop) {
+        this.animateDesktopDetails(npc, parts, phase, swing, idle, hurt);
+      }
+    }
+
+    animateDesktopDetails(npc, parts, phase, swing, idle, hurt) {
+      const desktopParts = npc.group.userData.desktopParts;
+      if (!desktopParts) return;
+      const aiming = npc.seesPlayer || npc.state === 'attack' || npc.state === 'cover' || npc.state === 'chase';
+      const breathing = Math.sin(phase * 0.52) * 0.45;
+      if (desktopParts.chest) {
+        desktopParts.chest.position.y = 53 + idle + breathing * 0.18;
+        desktopParts.chest.rotation.y = parts.torso.rotation.y * 0.72;
+      }
+      if (desktopParts.waist) {
+        desktopParts.waist.position.y = 37 + idle * 0.45;
+        desktopParts.waist.rotation.z = Math.sin(phase) * (npc.isMoving ? 0.035 : 0.01);
+      }
+      if (desktopParts.pelvis) {
+        desktopParts.pelvis.position.y = 30 + idle * 0.28;
+        desktopParts.pelvis.rotation.x = npc.isMoving ? Math.sin(phase) * 0.035 : 0;
+      }
+      if (desktopParts.leftHand) desktopParts.leftHand.rotation.z = aiming ? -0.2 : Math.sin(phase) * 0.08;
+      if (desktopParts.rightHand) desktopParts.rightHand.rotation.z = aiming ? 0.2 : -Math.sin(phase) * 0.08;
+      if (desktopParts.leftFoot) desktopParts.leftFoot.rotation.x = -0.08 + Math.max(0, swing) * 0.1;
+      if (desktopParts.rightFoot) desktopParts.rightFoot.rotation.x = -0.08 + Math.max(0, -swing) * 0.1;
+      if (desktopParts.weaponSet && desktopParts.weaponSet.rig) {
+        const recoil = npc.aimKick || 0;
+        desktopParts.weaponSet.rig.rotation.x = aiming ? -0.08 - recoil * 0.16 : -0.02;
+        desktopParts.weaponSet.rig.rotation.y = (npc.torsoYaw || 0) * 0.28;
+      }
+      if (desktopParts.hair) {
+        desktopParts.hair.rotation.z = hurt * (npc.hurtPoseSign || 1) * 0.05;
+      }
     }
 
     applyHurtPose(npc, parts, hurt) {
