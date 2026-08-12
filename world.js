@@ -1078,8 +1078,8 @@
       add('gravel', new THREE.MeshStandardMaterial({ color: 0x6a6b68, roughness: 0.98, metalness: 0, normalMap: normalCracked, normalScale: new THREE.Vector2(0.12, 0.12) }));
       add('weedA', new THREE.MeshStandardMaterial({ color: 0x315f36, roughness: 0.95, metalness: 0, normalMap: normalFabric, normalScale: new THREE.Vector2(0.08, 0.08) }));
       add('weedB', new THREE.MeshStandardMaterial({ color: 0x486d38, roughness: 0.96, metalness: 0, normalMap: normalFabric, normalScale: new THREE.Vector2(0.08, 0.08) }));
-      add('windowGlass', new THREE.MeshStandardMaterial({ color: 0x8fc8ef, roughness: 0.18, metalness: 0.02, transparent: true, opacity: 0.42, envMapIntensity: 0.55, side: THREE.DoubleSide }));
-      add('windowDark', new THREE.MeshBasicMaterial({ color: 0x071017, transparent: true, opacity: 0.58, side: THREE.DoubleSide }));
+      add('windowGlass', new THREE.MeshStandardMaterial({ color: 0x8fc8ef, roughness: 0.22, metalness: 0.02, transparent: true, opacity: 0.34, envMapIntensity: 0.38, side: THREE.DoubleSide }));
+      add('windowDark', new THREE.MeshBasicMaterial({ color: 0x071017, transparent: true, opacity: 0.62, side: THREE.DoubleSide }));
       add('windowFrame', new THREE.MeshStandardMaterial({ color: 0x1d252d, roughness: 0.62, metalness: 0.2 }));
       add('facadeGroove', new THREE.MeshBasicMaterial({ color: 0x10171d, transparent: true, opacity: 0.26 }));
       add('pipeMetal', new THREE.MeshStandardMaterial({ color: 0x38424a, roughness: 0.52, metalness: 0.5, normalMap: normalFine, normalScale: new THREE.Vector2(0.06, 0.06) }));
@@ -1887,8 +1887,9 @@
     }
 
     addBuildingWindows(object) {
-      const glassClosed = new THREE.MeshBasicMaterial({ color: 0x9fd5ff, transparent: true, opacity: 0.42, side: THREE.DoubleSide });
-      const glassOpen = new THREE.MeshBasicMaterial({ color: 0x9fd5ff, transparent: true, opacity: 0.16, side: THREE.DoubleSide });
+      const desktop = this.isDesktopLighting();
+      const glassClosed = new THREE.MeshBasicMaterial({ color: 0x9fd5ff, transparent: true, opacity: desktop ? 0.24 : 0.42, side: THREE.DoubleSide });
+      const glassOpen = new THREE.MeshBasicMaterial({ color: 0x9fd5ff, transparent: true, opacity: desktop ? 0.08 : 0.16, side: THREE.DoubleSide });
       const floors = object.floors || 2;
       const floorHeight = 112;
       const count = Math.max(2, Math.floor(object.w / 110));

@@ -818,7 +818,7 @@
           dir.x += randomSigned(2.4);
           dir.y += 0.85 + randomSigned(0.55);
           dir.z += randomSigned(2.4);
-          this.addParticle(hitPosition, this.tempEffectVelocity.copy(dir).normalize().multiplyScalar(390 + Math.random() * 300), Math.random() > 0.35 ? 0xffffff : 0xffb246, 1.45, 0.18, true);
+          this.addParticle(hitPosition, this.tempEffectVelocity.copy(dir).normalize().multiplyScalar(360 + Math.random() * 260), Math.random() > 0.35 ? 0xffe2a8 : 0xffad4a, 1.25, 0.16, true);
         }
       } else if (impact.material === 'wood') {
         for (let i = 0, count = this.scaledEffectCount(5, 1); i < count; i += 1) {
