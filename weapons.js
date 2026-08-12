@@ -16,7 +16,12 @@
     particles: 260,
     marks: 90,
     debris: 90,
-    rings: 12
+    rings: 12,
+    shells: 34
+  };
+  const WEAPON_VISUAL_QUALITY = {
+    MOBILE: 'MOBILE',
+    DESKTOP: 'DESKTOP'
   };
 
   function randomSigned(amount) {
@@ -60,6 +65,7 @@
       this.lastShotTime = 0;
       this.muzzleFlashPower = 0;
       this.muzzleFlashTime = 0;
+      this.visualCameraKick = 0;
       this.bullets = [];
       this.effects = [];
       this.performanceProfile = {
@@ -86,11 +92,21 @@
       this.tempViewRotation = new THREE.Euler();
       this.tempMarkForward = new THREE.Vector3(0, 0, 1);
       this.tempMuzzlePoint = new THREE.Vector3();
+      this.tempShellVector = new THREE.Vector3();
+      this.visualQuality = this.getInitialVisualQuality();
+      this.weaponMaterials = null;
+      this.weaponNormalMaps = null;
+      this.shellPool = null;
+      this.activeShells = null;
+      this.muzzleLight = null;
       this.ammo = {
         pistol: { magazine: WEAPONS.pistol.magazineSize, reserve: WEAPONS.pistol.reserveAmmo },
         rifle: { magazine: WEAPONS.rifle.magazineSize, reserve: WEAPONS.rifle.reserveAmmo }
       };
       this.createRuntimePools();
+      if (this.visualQuality === WEAPON_VISUAL_QUALITY.DESKTOP) {
+        this.createDesktopGunplayPools();
+      }
       this.viewModel = this.createViewModel();
       this.player.camera.add(this.viewModel.root);
       this.updateHud(performance.now());
@@ -99,6 +115,61 @@
 
     setPerformanceProfile(profile) {
       this.performanceProfile = Object.assign({}, this.performanceProfile, profile || {});
+      const nextQuality = this.performanceProfile.mobile ? WEAPON_VISUAL_QUALITY.MOBILE : WEAPON_VISUAL_QUALITY.DESKTOP;
+      if (nextQuality !== this.visualQuality) this.setVisualQuality(nextQuality);
+    }
+
+    getInitialVisualQuality() {
+      try {
+        return localStorage.getItem('controlMode') === 'mobile'
+          ? WEAPON_VISUAL_QUALITY.MOBILE
+          : WEAPON_VISUAL_QUALITY.DESKTOP;
+      } catch (error) {
+        return WEAPON_VISUAL_QUALITY.DESKTOP;
+      }
+    }
+
+    setVisualQuality(quality) {
+      const nextQuality = quality === WEAPON_VISUAL_QUALITY.MOBILE
+        ? WEAPON_VISUAL_QUALITY.MOBILE
+        : WEAPON_VISUAL_QUALITY.DESKTOP;
+      if (this.visualQuality === nextQuality) return;
+      this.visualQuality = nextQuality;
+      if (this.viewModel && this.viewModel.root && this.viewModel.root.parent) {
+        this.viewModel.root.parent.remove(this.viewModel.root);
+      }
+      this.disposeViewModel(this.viewModel);
+      this.disposeWeaponNormalMaps();
+      this.weaponMaterials = null;
+      this.weaponNormalMaps = null;
+      if (nextQuality === WEAPON_VISUAL_QUALITY.DESKTOP) this.createDesktopGunplayPools();
+      else this.destroyDesktopGunplayPools();
+      this.viewModel = this.createViewModel();
+      this.player.camera.add(this.viewModel.root);
+      this.updateWeaponModelVisibility();
+    }
+
+    disposeViewModel(viewModel) {
+      if (!viewModel || !viewModel.root) return;
+      const disposedMaterials = new Set();
+      viewModel.root.traverse((child) => {
+        if (!child.isMesh) return;
+        if (child.geometry) child.geometry.dispose();
+        const materials = Array.isArray(child.material) ? child.material : [child.material];
+        for (const material of materials) {
+          if (!material || disposedMaterials.has(material)) continue;
+          disposedMaterials.add(material);
+          material.dispose();
+        }
+      });
+    }
+
+    disposeWeaponNormalMaps() {
+      if (!this.weaponNormalMaps) return;
+      this.weaponNormalMaps.forEach((texture) => {
+        if (texture && texture.dispose) texture.dispose();
+      });
+      this.weaponNormalMaps.clear();
     }
 
     scaledEffectCount(count, minimum) {
@@ -151,6 +222,59 @@
         this.sharedGeometries.ring,
         new THREE.MeshBasicMaterial({ color: 0xffd36b, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide })
       ));
+    }
+
+    createDesktopGunplayPools() {
+      if (this.shellPool) return;
+      this.shellPool = [];
+      this.activeShells = [];
+      const geometry = new THREE.CylinderGeometry(1.2, 1.2, 4.8, 12);
+      const material = this.getWeaponMaterial('brass', { color: 0xc29246, roughness: 0.32, metalness: 0.86 });
+      for (let i = 0; i < POOL_LIMITS.shells; i += 1) {
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.visible = false;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        mesh.rotation.z = Math.PI / 2;
+        this.scene.add(mesh);
+        this.shellPool.push({
+          mesh,
+          velocity: new THREE.Vector3(),
+          angular: new THREE.Vector3(),
+          bounce: 0,
+          life: 0,
+          maxLife: 1.5,
+          inPool: true
+        });
+      }
+      this.muzzleLight = new THREE.PointLight(0xffb65f, 0, 2.8, 2.1);
+      this.muzzleLight.visible = false;
+      this.player.camera.add(this.muzzleLight);
+    }
+
+    destroyDesktopGunplayPools() {
+      if (this.muzzleLight) {
+        if (this.muzzleLight.parent) this.muzzleLight.parent.remove(this.muzzleLight);
+        this.muzzleLight.dispose && this.muzzleLight.dispose();
+        this.muzzleLight = null;
+      }
+      const shells = (this.shellPool || []).concat(this.activeShells || []);
+      const disposedGeometries = new Set();
+      const disposedMaterials = new Set();
+      for (const shell of shells) {
+        if (!shell || !shell.mesh) continue;
+        if (shell.mesh.parent) shell.mesh.parent.remove(shell.mesh);
+        if (shell.mesh.geometry && !disposedGeometries.has(shell.mesh.geometry)) {
+          disposedGeometries.add(shell.mesh.geometry);
+          shell.mesh.geometry.dispose();
+        }
+        if (shell.mesh.material && !disposedMaterials.has(shell.mesh.material)) {
+          disposedMaterials.add(shell.mesh.material);
+          shell.mesh.material.dispose();
+        }
+      }
+      this.shellPool = null;
+      this.activeShells = null;
     }
 
     createParticleInstancePool(count) {
@@ -497,6 +621,7 @@
       this.finishReloadIfReady(now);
       this.tryShoot(now);
       this.updateViewModel(dt);
+      this.updateShells(dt);
 
       for (let i = this.bullets.length - 1; i >= 0; i -= 1) {
         const bullet = this.bullets[i];
@@ -651,11 +776,12 @@
       hitPosition.y = Math.max(2, hitPosition.y);
       this.addBulletMark(hitPosition, impact.normal, impact.material);
 
+      const desktopBonus = this.visualQuality === WEAPON_VISUAL_QUALITY.DESKTOP ? 1.25 : 1;
       const particleCount = this.scaledEffectCount(impact.material === 'metal' ? 14
         : impact.material === 'concrete' ? 11
           : impact.material === 'wood' ? 9
             : impact.material === 'dirt' ? 5
-              : 7, 2);
+              : 7, 2) * desktopBonus;
       for (let i = 0; i < particleCount; i += 1) {
         const dir = this.tempEffectDirection.copy(velocity).normalize().multiplyScalar(-1);
         const materialScatter = impact.material === 'metal' ? 1.75 : impact.material === 'wood' ? 1.25 : 1.05;
@@ -681,6 +807,23 @@
         for (let i = 0, count = this.scaledEffectCount(5, 1); i < count; i += 1) {
           const dir = this.tempEffectDirection.set(randomSigned(0.7), 0.2 + Math.random() * 0.65, randomSigned(0.7)).normalize();
           this.addParticle(hitPosition, this.tempEffectVelocity.copy(dir).multiplyScalar(70 + Math.random() * 90), 0xc8c0b5, 4.5, 0.55, true);
+        }
+      }
+
+      if (this.visualQuality !== WEAPON_VISUAL_QUALITY.DESKTOP) return;
+
+      if (impact.material === 'metal') {
+        for (let i = 0, count = this.scaledEffectCount(4, 1); i < count; i += 1) {
+          const dir = this.tempEffectDirection.copy(velocity).normalize().multiplyScalar(-1);
+          dir.x += randomSigned(2.4);
+          dir.y += 0.85 + randomSigned(0.55);
+          dir.z += randomSigned(2.4);
+          this.addParticle(hitPosition, this.tempEffectVelocity.copy(dir).normalize().multiplyScalar(390 + Math.random() * 300), Math.random() > 0.35 ? 0xffffff : 0xffb246, 1.45, 0.18, true);
+        }
+      } else if (impact.material === 'wood') {
+        for (let i = 0, count = this.scaledEffectCount(5, 1); i < count; i += 1) {
+          const dir = this.tempEffectDirection.set(randomSigned(1.15), 0.3 + Math.random() * 0.8, randomSigned(1.15)).normalize();
+          this.addParticle(hitPosition, this.tempEffectVelocity.copy(dir).multiplyScalar(95 + Math.random() * 145), Math.random() > 0.5 ? 0x6a3f22 : 0xb47a42, 2.35, 0.62, true);
         }
       }
     }
@@ -786,6 +929,17 @@
         spark.z += randomSigned(0.22);
         this.addParticle(muzzle, this.tempEffectVelocity.copy(spark).normalize().multiplyScalar(160 + Math.random() * 120), this.current === 'rifle' ? 0xff9f5a : 0xffd36b, this.current === 'rifle' ? 2.2 : 2.6, 0.16, false);
       }
+
+      if (this.visualQuality === WEAPON_VISUAL_QUALITY.DESKTOP) {
+        const flashDustCount = this.scaledEffectCount(this.current === 'rifle' ? 3 : 2, 1);
+        for (let i = 0; i < flashDustCount; i += 1) {
+          const drift = this.tempEffectDirection.copy(direction).multiplyScalar(26 + Math.random() * 22);
+          drift.x += randomSigned(34);
+          drift.y += 8 + Math.random() * 12;
+          drift.z += randomSigned(34);
+          this.addParticle(muzzle, this.tempEffectVelocity.copy(drift), 0xd8d0c2, this.current === 'rifle' ? 5.1 : 4.2, 0.28 + Math.random() * 0.18, false);
+        }
+      }
     }
 
     addBulletMark(position, normal, material) {
@@ -874,6 +1028,75 @@
       }
     }
 
+    ejectShell() {
+      if (this.visualQuality !== WEAPON_VISUAL_QUALITY.DESKTOP || !this.shellPool || !this.shellPool.length) return;
+      const shell = this.shellPool.pop();
+      shell.inPool = false;
+      shell.life = shell.maxLife = this.current === 'rifle' ? 1.75 : 1.55;
+      shell.bounce = 0;
+      shell.mesh.visible = true;
+      shell.mesh.material.opacity = 1;
+
+      this.player.camera.updateMatrixWorld();
+      const localPosition = this.current === 'rifle'
+        ? this.tempShellVector.set(24, -9, -54)
+        : this.tempShellVector.set(19, -10, -36);
+      shell.mesh.position.copy(localPosition);
+      this.player.camera.localToWorld(shell.mesh.position);
+      shell.mesh.quaternion.copy(this.player.camera.quaternion);
+      shell.mesh.rotateZ(Math.PI / 2 + randomSigned(0.8));
+
+      shell.velocity.set(
+        this.current === 'rifle' ? 135 + Math.random() * 45 : 105 + Math.random() * 35,
+        52 + Math.random() * 36,
+        -32 + randomSigned(28)
+      ).applyQuaternion(this.player.camera.quaternion);
+      shell.angular.set(randomSigned(9), randomSigned(12), randomSigned(14));
+      this.activeShells.push(shell);
+    }
+
+    releaseShell(shell) {
+      shell.mesh.visible = false;
+      shell.velocity.set(0, 0, 0);
+      shell.angular.set(0, 0, 0);
+      shell.inPool = true;
+      this.shellPool.push(shell);
+    }
+
+    updateShells(dt) {
+      if (!this.activeShells || !this.activeShells.length) return;
+      for (let i = this.activeShells.length - 1; i >= 0; i -= 1) {
+        const shell = this.activeShells[i];
+        shell.life -= dt;
+        shell.velocity.y -= 360 * dt;
+        shell.mesh.position.addScaledVector(shell.velocity, dt);
+        shell.mesh.rotation.x += shell.angular.x * dt;
+        shell.mesh.rotation.y += shell.angular.y * dt;
+        shell.mesh.rotation.z += shell.angular.z * dt;
+
+        const groundY = this.world.getGroundHeightAt(shell.mesh.position.x, shell.mesh.position.z, shell.mesh.position.y) + 1.2;
+        if (shell.mesh.position.y <= groundY) {
+          shell.mesh.position.y = groundY;
+          if (shell.bounce < 2 && Math.abs(shell.velocity.y) > 42) {
+            shell.velocity.y = Math.abs(shell.velocity.y) * 0.24;
+            shell.velocity.x *= 0.54;
+            shell.velocity.z *= 0.54;
+            shell.angular.multiplyScalar(0.64);
+            shell.bounce += 1;
+          } else {
+            shell.velocity.multiplyScalar(0.18);
+            shell.angular.multiplyScalar(0.18);
+          }
+        }
+
+        if (shell.life <= 0) {
+          this.releaseShell(shell);
+          const last = this.activeShells.pop();
+          if (i < this.activeShells.length) this.activeShells[i] = last;
+        }
+      }
+    }
+
     updateParticleInstance(effect, lifeScale) {
       if (!this.particleMesh) return;
       const scale = Math.max(0, effect.size * lifeScale);
@@ -918,9 +1141,10 @@
       root.rotation.set(-0.04, -0.05, 0);
       root.scale.set(92, 92, 92);
 
-      const pistol = this.createPistolModel();
-      const rifle = this.createRifleModel();
-      const hands = this.createHandsModel();
+      const desktop = this.visualQuality === WEAPON_VISUAL_QUALITY.DESKTOP;
+      const pistol = desktop ? this.createDesktopPistolModel() : this.createPistolModel();
+      const rifle = desktop ? this.createDesktopRifleModel() : this.createRifleModel();
+      const hands = desktop ? this.createDesktopHandsModel() : this.createHandsModel();
       root.add(hands.left.group);
       root.add(hands.right.group);
       root.add(pistol.group);
@@ -935,6 +1159,45 @@
         roughness,
         metalness
       });
+    }
+
+    getWeaponMaterial(key, options) {
+      if (!this.weaponMaterials) this.weaponMaterials = new Map();
+      if (!this.weaponMaterials.has(key)) {
+        const material = new THREE.MeshStandardMaterial(options);
+        this.weaponMaterials.set(key, material);
+      }
+      return this.weaponMaterials.get(key);
+    }
+
+    getWeaponNormalMap(key) {
+      if (!this.weaponNormalMaps) this.weaponNormalMaps = new Map();
+      if (this.weaponNormalMaps.has(key)) return this.weaponNormalMaps.get(key);
+      const canvas = document.createElement('canvas');
+      canvas.width = 48;
+      canvas.height = 48;
+      const context = canvas.getContext('2d');
+      const image = context.createImageData(canvas.width, canvas.height);
+      const seed = key.length * 31;
+      for (let y = 0; y < canvas.height; y += 1) {
+        for (let x = 0; x < canvas.width; x += 1) {
+          const i = (y * canvas.width + x) * 4;
+          const stripe = key === 'polymer' ? Math.sin(x * 0.8) * 8 : Math.sin((x + y) * 0.35) * 5;
+          const noise = Math.sin((x * 12.9898 + y * 78.233 + seed) * 0.22) * 43758.5453;
+          const grain = (noise - Math.floor(noise) - 0.5) * 10;
+          image.data[i] = clamp(128 + stripe + grain, 100, 156);
+          image.data[i + 1] = clamp(128 - stripe * 0.35 + grain, 100, 156);
+          image.data[i + 2] = 226;
+          image.data[i + 3] = 255;
+        }
+      }
+      context.putImageData(image, 0, 0);
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      texture.repeat.set(2, 2);
+      this.weaponNormalMaps.set(key, texture);
+      return texture;
     }
 
     addBox(parent, size, position, material, rotation) {
@@ -962,6 +1225,152 @@
       mesh.receiveShadow = true;
       parent.add(mesh);
       return mesh;
+    }
+
+    addSphere(parent, radius, position, material, scale, segments) {
+      const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius, segments || 12, Math.max(8, Math.round((segments || 12) * 0.7))), material);
+      mesh.position.set(position.x, position.y, position.z);
+      if (scale) mesh.scale.set(scale.x || 1, scale.y || 1, scale.z || 1);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    }
+
+    createDesktopHandsModel() {
+      const skin = this.getWeaponMaterial('handsSkin', { color: 0xb8795f, roughness: 0.7, metalness: 0.02, normalMap: this.getWeaponNormalMap('skin'), normalScale: new THREE.Vector2(0.08, 0.08) });
+      const glove = this.getWeaponMaterial('tacticalGlove', { color: 0x0c1014, roughness: 0.78, metalness: 0.04, normalMap: this.getWeaponNormalMap('polymer'), normalScale: new THREE.Vector2(0.1, 0.1) });
+      const sleeve = this.getWeaponMaterial('sleeveCloth', { color: 0x273542, roughness: 0.92, metalness: 0.01, normalMap: this.getWeaponNormalMap('cloth'), normalScale: new THREE.Vector2(0.14, 0.14) });
+      const seam = this.getWeaponMaterial('seamDark', { color: 0x121820, roughness: 0.86, metalness: 0.02 });
+
+      const left = { group: new THREE.Group() };
+      const right = { group: new THREE.Group() };
+      left.group.position.set(-0.2, -0.255, -0.31);
+      left.group.rotation.set(-0.34, -0.2, 0.2);
+      right.group.position.set(0.18, -0.255, -0.09);
+      right.group.rotation.set(-0.22, 0.14, -0.18);
+
+      const buildHand = (hand, side) => {
+        this.addCylinder(hand.group, 0.048, 0.057, 0.38, { x: 0, y: 0, z: 0 }, sleeve, { x: Math.PI / 2 }, 18);
+        this.addCylinder(hand.group, 0.039, 0.044, 0.22, { x: side * 0.012, y: 0.015, z: -0.235 }, skin, { x: Math.PI / 2, z: side * 0.04 }, 18);
+        this.addBox(hand.group, { x: 0.092, y: 0.058, z: 0.09 }, { x: side * 0.025, y: 0.008, z: -0.355 }, glove, { y: side * 0.12, x: -0.06 });
+        this.addSphere(hand.group, 0.036, { x: side * 0.032, y: -0.002, z: -0.405 }, glove, { x: 1.05, y: 0.72, z: 1.35 }, 12);
+        for (let i = 0; i < 4; i += 1) {
+          const fingerX = side * (-0.025 + i * 0.016);
+          const finger = this.addCylinder(hand.group, 0.007, 0.009, 0.074, { x: fingerX, y: -0.027, z: -0.418 - i * 0.002 }, glove, { x: Math.PI / 2 + 0.28, z: side * 0.12 }, 8);
+          finger.scale.y = i === 0 || i === 3 ? 0.86 : 1;
+        }
+        this.addCylinder(hand.group, 0.01, 0.014, 0.07, { x: side * 0.066, y: 0.018, z: -0.39 }, glove, { x: Math.PI / 2, y: side * 0.62 }, 8);
+        this.addBox(hand.group, { x: 0.1, y: 0.012, z: 0.02 }, { x: side * 0.006, y: 0.055, z: -0.08 }, seam);
+      };
+
+      buildHand(left, -1);
+      buildHand(right, 1);
+      left.basePosition = left.group.position.clone();
+      right.basePosition = right.group.position.clone();
+      left.baseRotation = left.group.rotation.clone();
+      right.baseRotation = right.group.rotation.clone();
+      return { left, right };
+    }
+
+    createDesktopPistolModel() {
+      const group = new THREE.Group();
+      const steel = this.getWeaponMaterial('gunBluedSteel', { color: 0x151b22, roughness: 0.34, metalness: 0.72, normalMap: this.getWeaponNormalMap('metal'), normalScale: new THREE.Vector2(0.055, 0.055) });
+      const darkSteel = this.getWeaponMaterial('gunDarkSteel', { color: 0x080c10, roughness: 0.42, metalness: 0.82 });
+      const polymer = this.getWeaponMaterial('gunPolymer', { color: 0x1d1916, roughness: 0.82, metalness: 0.03, normalMap: this.getWeaponNormalMap('polymer'), normalScale: new THREE.Vector2(0.1, 0.1) });
+      const sight = this.getWeaponMaterial('gunSightPaint', { color: 0xdfe8ec, roughness: 0.5, metalness: 0.06 });
+      const brass = this.getWeaponMaterial('gunBrassAccent', { color: 0xa97d38, roughness: 0.38, metalness: 0.68 });
+
+      const slide = this.addBox(group, { x: 0.15, y: 0.085, z: 0.39 }, { x: 0, y: 0.047, z: -0.23 }, steel);
+      this.addBox(group, { x: 0.12, y: 0.028, z: 0.34 }, { x: 0, y: 0.095, z: -0.235 }, darkSteel);
+      for (let i = 0; i < 5; i += 1) {
+        this.addBox(group, { x: 0.012, y: 0.045, z: 0.018 }, { x: -0.081, y: 0.048, z: -0.09 - i * 0.025 }, darkSteel, { z: 0.28 });
+        this.addBox(group, { x: 0.012, y: 0.045, z: 0.018 }, { x: 0.081, y: 0.048, z: -0.09 - i * 0.025 }, darkSteel, { z: -0.28 });
+      }
+      this.addBox(group, { x: 0.125, y: 0.048, z: 0.24 }, { x: 0, y: -0.012, z: -0.18 }, darkSteel);
+      this.addBox(group, { x: 0.106, y: 0.175, z: 0.09 }, { x: 0, y: -0.145, z: -0.075 }, polymer, { x: -0.34 });
+      this.addBox(group, { x: 0.11, y: 0.018, z: 0.075 }, { x: 0, y: -0.035, z: -0.275 }, darkSteel, { x: -0.22 });
+      this.addCylinder(group, 0.018, 0.018, 0.1, { x: 0, y: -0.056, z: -0.258 }, darkSteel, { z: Math.PI / 2 }, 14);
+      this.addBox(group, { x: 0.07, y: 0.05, z: 0.014 }, { x: 0, y: -0.042, z: -0.23 }, brass, { x: -0.2 });
+      this.addCylinder(group, 0.026, 0.026, 0.31, { x: 0, y: 0.022, z: -0.445 }, darkSteel, { x: Math.PI / 2 }, 24);
+      this.addCylinder(group, 0.015, 0.015, 0.325, { x: 0, y: 0.023, z: -0.455 }, this.getWeaponMaterial('barrelBore', { color: 0x020405, roughness: 0.28, metalness: 0.82 }), { x: Math.PI / 2 }, 18);
+      this.addBox(group, { x: 0.035, y: 0.018, z: 0.018 }, { x: 0, y: 0.101, z: -0.372 }, sight);
+      this.addBox(group, { x: 0.078, y: 0.017, z: 0.02 }, { x: 0, y: 0.101, z: -0.085 }, sight);
+      const magazine = this.addBox(group, { x: 0.055, y: 0.11, z: 0.074 }, { x: 0, y: -0.205, z: -0.07 }, darkSteel, { x: -0.34 });
+      this.addBox(group, { x: 0.104, y: 0.016, z: 0.018 }, { x: 0, y: -0.053, z: -0.02 }, darkSteel);
+      slide.userData.slide = true;
+
+      const flash = this.createDesktopMuzzleFlash(0.095);
+      flash.position.set(0, 0.023, -0.62);
+      group.add(flash);
+      group.position.set(0.09, -0.025, 0);
+      return {
+        group,
+        flash,
+        basePosition: group.position.clone(),
+        baseRotation: group.rotation.clone(),
+        adsPosition: new THREE.Vector3(0, 0.014, -0.225),
+        adsRotation: new THREE.Euler(-0.012, 0, 0),
+        animatedParts: {
+          slide,
+          magazine,
+          slideBaseZ: slide.position.z,
+          magazineBaseY: magazine.position.y,
+          magazineBaseZ: magazine.position.z
+        }
+      };
+    }
+
+    createDesktopRifleModel() {
+      const group = new THREE.Group();
+      const receiver = this.getWeaponMaterial('rifleReceiver', { color: 0x202832, roughness: 0.46, metalness: 0.56, normalMap: this.getWeaponNormalMap('metal'), normalScale: new THREE.Vector2(0.05, 0.05) });
+      const black = this.getWeaponMaterial('rifleBlack', { color: 0x070b0f, roughness: 0.55, metalness: 0.42 });
+      const rail = this.getWeaponMaterial('rifleRail', { color: 0x3d4852, roughness: 0.43, metalness: 0.58 });
+      const polymer = this.getWeaponMaterial('riflePolymer', { color: 0x151b22, roughness: 0.78, metalness: 0.05, normalMap: this.getWeaponNormalMap('polymer'), normalScale: new THREE.Vector2(0.08, 0.08) });
+      const glass = this.getWeaponMaterial('opticGlass', { color: 0x6fc8ff, roughness: 0.12, metalness: 0.02, emissive: 0x102536, emissiveIntensity: 0.18 });
+
+      this.addBox(group, { x: 0.18, y: 0.108, z: 0.46 }, { x: 0, y: 0.02, z: -0.25 }, receiver);
+      this.addBox(group, { x: 0.125, y: 0.038, z: 0.46 }, { x: 0, y: 0.098, z: -0.25 }, rail);
+      for (let i = 0; i < 9; i += 1) {
+        this.addBox(group, { x: 0.17, y: 0.018, z: 0.012 }, { x: 0, y: 0.14, z: -0.49 + i * 0.055 }, black);
+      }
+      this.addBox(group, { x: 0.145, y: 0.058, z: 0.26 }, { x: 0, y: 0.025, z: -0.59 }, polymer);
+      for (let i = 0; i < 4; i += 1) {
+        this.addBox(group, { x: 0.018, y: 0.06, z: 0.026 }, { x: -0.085, y: 0.025, z: -0.65 + i * 0.06 }, rail);
+        this.addBox(group, { x: 0.018, y: 0.06, z: 0.026 }, { x: 0.085, y: 0.025, z: -0.65 + i * 0.06 }, rail);
+      }
+      this.addCylinder(group, 0.024, 0.024, 0.56, { x: 0, y: 0.026, z: -0.78 }, black, { x: Math.PI / 2 }, 24);
+      this.addCylinder(group, 0.04, 0.035, 0.13, { x: 0, y: 0.027, z: -0.505 }, rail, { x: Math.PI / 2 }, 18);
+      this.addCylinder(group, 0.032, 0.032, 0.075, { x: 0, y: 0.027, z: -1.07 }, black, { x: Math.PI / 2 }, 18);
+      const magazine = this.addBox(group, { x: 0.093, y: 0.23, z: 0.12 }, { x: 0, y: -0.135, z: -0.21 }, polymer, { x: -0.18 });
+      this.addBox(group, { x: 0.085, y: 0.17, z: 0.08 }, { x: 0, y: -0.125, z: -0.015 }, polymer, { x: -0.36 });
+      this.addBox(group, { x: 0.19, y: 0.078, z: 0.32 }, { x: 0, y: -0.02, z: 0.09 }, black);
+      this.addBox(group, { x: 0.2, y: 0.102, z: 0.17 }, { x: 0, y: 0.0, z: 0.335 }, polymer);
+      const chargingHandle = this.addBox(group, { x: 0.11, y: 0.034, z: 0.21 }, { x: 0.095, y: 0.062, z: -0.17 }, rail, { z: 0.2 });
+      this.addCylinder(group, 0.056, 0.056, 0.14, { x: 0, y: 0.18, z: -0.31 }, black, { z: Math.PI / 2 }, 24);
+      this.addCylinder(group, 0.034, 0.034, 0.145, { x: 0, y: 0.18, z: -0.31 }, glass, { z: Math.PI / 2 }, 24);
+      this.addBox(group, { x: 0.02, y: 0.06, z: 0.02 }, { x: 0, y: 0.125, z: -0.79 }, rail);
+      this.addBox(group, { x: 0.06, y: 0.035, z: 0.025 }, { x: 0, y: 0.133, z: -0.94 }, rail);
+
+      const flash = this.createDesktopMuzzleFlash(0.125);
+      flash.position.set(0, 0.027, -1.16);
+      group.add(flash);
+      group.position.set(0.065, -0.018, 0.13);
+      return {
+        group,
+        flash,
+        basePosition: group.position.clone(),
+        baseRotation: group.rotation.clone(),
+        adsPosition: new THREE.Vector3(0, 0.02, -0.27),
+        adsRotation: new THREE.Euler(-0.006, 0, 0),
+        animatedParts: {
+          magazine,
+          chargingHandle,
+          magazineBaseY: magazine.position.y,
+          magazineBaseZ: magazine.position.z,
+          chargingBaseZ: chargingHandle.position.z
+        }
+      };
     }
 
     createHandsModel() {
@@ -1081,6 +1490,43 @@
       return group;
     }
 
+    createDesktopMuzzleFlash(size) {
+      const group = new THREE.Group();
+      const flameMaterial = new THREE.MeshBasicMaterial({
+        color: 0xffad3d,
+        transparent: true,
+        opacity: 0.9,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide
+      });
+      const coreMaterial = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.7,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending
+      });
+      const flame = new THREE.Mesh(new THREE.ConeGeometry(size * 0.62, size * 2.35, 11), flameMaterial);
+      flame.rotation.x = -Math.PI / 2;
+      flame.position.z = -size * 0.88;
+      group.add(flame);
+
+      const core = new THREE.Mesh(new THREE.SphereGeometry(size * 0.36, 10, 8), coreMaterial);
+      core.position.z = -size * 0.15;
+      group.add(core);
+
+      for (let i = 0; i < 2; i += 1) {
+        const plane = new THREE.Mesh(new THREE.PlaneGeometry(size * 1.8, size * 0.48), flameMaterial);
+        plane.rotation.z = i * Math.PI / 2 + randomSigned(0.18);
+        plane.position.z = -size * 0.35;
+        group.add(plane);
+      }
+
+      group.visible = false;
+      return group;
+    }
+
     updateWeaponModelVisibility() {
       this.viewModel.pistol.group.visible = this.current === 'pistol' || this.previousWeapon === 'pistol';
       this.viewModel.rifle.group.visible = this.current === 'rifle' || this.previousWeapon === 'rifle';
@@ -1105,10 +1551,22 @@
       this.muzzleFlashPower = rifle ? 0.95 + Math.random() * 0.42 : 1.2 + Math.random() * 0.55;
       this.activeWeaponView.flash.visible = true;
       this.activeWeaponView.flash.rotation.z = Math.random() * Math.PI;
+      if (this.visualQuality === WEAPON_VISUAL_QUALITY.DESKTOP) {
+        this.visualCameraKick = Math.min(1, this.visualCameraKick + (rifle ? 0.34 : 0.5));
+        this.ejectShell();
+        this.flashMuzzleLight();
+      }
       this.player.addCameraShake(rifle ? 0.105 + this.shotHeat * 0.025 : 0.19);
       this.player.pitch = clamp(this.player.pitch + this.weapon.recoilLift * (this.aimAmount > 0.7 ? 0.46 : 0.74) * (rifle ? 0.85 + this.shotHeat * 0.18 : 1.18), -1.25, 1.25);
       this.player.yaw += randomSigned(rifle ? 0.0014 : 0.0026) * (this.aimAmount > 0.7 ? 0.55 : 1);
       this.player.updateCamera();
+    }
+
+    flashMuzzleLight() {
+      if (!this.muzzleLight) return;
+      this.muzzleLight.position.set(this.current === 'rifle' ? 0.05 : 0.075, -0.055, this.current === 'rifle' ? -0.96 : -0.62);
+      this.muzzleLight.intensity = this.current === 'rifle' ? 0.82 + Math.random() * 0.22 : 0.96 + Math.random() * 0.28;
+      this.muzzleLight.visible = true;
     }
 
     get activeWeaponView() {
@@ -1129,6 +1587,7 @@
       this.recoil = Math.max(0, this.recoil - dt * 6.8);
       this.recoilLift = Math.max(0, this.recoilLift - dt * 5.4);
       this.recoilYaw += (0 - this.recoilYaw) * (1 - Math.exp(-7.5 * dt));
+      this.visualCameraKick = Math.max(0, this.visualCameraKick - dt * 8.5);
       this.shotHeat = Math.max(0, this.shotHeat - dt * (this.current === 'rifle' ? 0.72 : 1.1));
       this.crosshairKick = Math.max(0, this.crosshairKick - dt * 32);
       this.muzzleFlashTime = Math.max(0, this.muzzleFlashTime - dt);
@@ -1172,6 +1631,7 @@
       );
 
       this.updateHands(bobX, bobY, reloadDip, reloadRoll, recoilBack);
+      this.updateDesktopWeaponParts(active, reloadProgress, recoilBack);
       this.updateSwapVisibility(drawProgress);
       this.updateDynamicCrosshair();
 
@@ -1180,12 +1640,33 @@
         const flashScale = (0.72 + Math.random() * 0.42) * (this.muzzleFlashPower || 1);
         active.flash.scale.set(flashScale, flashScale, flashScale);
       }
+
+      if (this.muzzleLight) {
+        this.muzzleLight.intensity *= Math.exp(-34 * dt);
+        this.muzzleLight.visible = this.muzzleLight.intensity > 0.02;
+      }
     }
 
     updateCameraFov(dt) {
-      const targetFov = VIEWMODEL.baseFov + (VIEWMODEL.adsFov - VIEWMODEL.baseFov) * this.aimAmount;
+      const targetFov = VIEWMODEL.baseFov + (VIEWMODEL.adsFov - VIEWMODEL.baseFov) * this.aimAmount + this.visualCameraKick * 0.34;
       this.player.camera.fov += (targetFov - this.player.camera.fov) * (1 - Math.exp(-10 * dt));
       this.player.camera.updateProjectionMatrix();
+    }
+
+    updateDesktopWeaponParts(active, reloadProgress, recoilBack) {
+      if (this.visualQuality !== WEAPON_VISUAL_QUALITY.DESKTOP || !active.animatedParts) return;
+      const parts = active.animatedParts;
+      if (parts.slide) {
+        parts.slide.position.z = parts.slideBaseZ + recoilBack * 0.3;
+      }
+      if (parts.chargingHandle) {
+        parts.chargingHandle.position.z = parts.chargingBaseZ + recoilBack * 0.22;
+      }
+      if (parts.magazine) {
+        const remove = this.reloadEndsAt > 0 ? Math.sin(Math.min(1, reloadProgress) * Math.PI) : 0;
+        parts.magazine.position.y = parts.magazineBaseY - remove * (this.current === 'rifle' ? 0.18 : 0.14);
+        parts.magazine.position.z = parts.magazineBaseZ + remove * (this.current === 'rifle' ? 0.035 : 0.02);
+      }
     }
 
     updateHands(bobX, bobY, reloadDip, reloadRoll, recoilBack) {
